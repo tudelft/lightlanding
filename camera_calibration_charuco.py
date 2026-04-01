@@ -212,45 +212,67 @@ def main():
                     print(f"Need at least {MIN_CAPTURES} good captures. Currently: {len(all_object_points)}")
                     continue
 
-                print("Running calibration...")
-                ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
-                    all_object_points,
-                    all_image_points,
-                    image_size,
-                    None,
-                    None
+                print("Running fisheye calibration...")
+
+                # Convert to fisheye-required format
+                objpoints = [op.reshape(-1, 1, 3) for op in all_object_points]
+                imgpoints = [ip.reshape(-1, 1, 2) for ip in all_image_points]
+
+                K = np.zeros((3, 3))
+                D = np.zeros((4, 1))
+
+                flags = (
+                    cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC |
+                    cv2.fisheye.CALIB_CHECK_COND |
+                    cv2.fisheye.CALIB_FIX_SKEW
                 )
 
-                rms = ret
-                reproj = compute_reprojection_error(
-                    all_object_points,
-                    all_image_points,
-                    rvecs,
-                    tvecs,
-                    camera_matrix,
-                    dist_coeffs
+                rms, K, D, rvecs, tvecs = cv2.fisheye.calibrate(
+                    objpoints,
+                    imgpoints,
+                    image_size,
+                    K,
+                    D,
+                    None,
+                    None,
+                    flags,
+                    (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-6)
                 )
+
+                # --- Reprojection error (fisheye version) ---
+                total_err = 0
+                total_points = 0
+
+                for i in range(len(objpoints)):
+                    projected, _ = cv2.fisheye.projectPoints(
+                        objpoints[i],
+                        rvecs[i],
+                        tvecs[i],
+                        K,
+                        D
+                    )
+
+                    err = cv2.norm(imgpoints[i], projected, cv2.NORM_L2)
+                    total_err += err * err
+                    total_points += len(objpoints[i])
+
+                reproj = np.sqrt(total_err / total_points)
 
                 np.savez(
                     OUTPUT_FILE,
-                    camera_matrix=camera_matrix,
-                    dist_coeffs=dist_coeffs,
+                    camera_matrix=K,
+                    dist_coeffs=D,
                     image_width=image_size[0],
                     image_height=image_size[1],
                     rms=rms,
                     reprojection_error=reproj,
-                    squares_x=SQUARES_X,
-                    squares_y=SQUARES_Y,
-                    square_length=SQUARE_LENGTH,
-                    marker_length=MARKER_LENGTH,
-                    aruco_dict=ARUCO_DICT,
                 )
 
-                print("\nCalibration finished")
-                print("RMS returned by calibrateCamera:", rms)
-                print("Mean reprojection error (pixels):", reproj)
-                print("Camera matrix:\n", camera_matrix)
-                print("Distortion coeffs:\n", dist_coeffs.ravel())
+                print("\nFISHEYE Calibration finished")
+                print("RMS:", rms)
+                print("Reprojection error:", reproj)
+                print("Camera matrix:\n", K)
+                print("Distortion coeffs:\n", D.ravel())
                 print(f"Saved to {OUTPUT_FILE}\n")
 
             elif key == ord("q"):
