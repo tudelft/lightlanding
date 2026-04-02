@@ -95,10 +95,10 @@ def detect_bright_led_rings(
 
         cv2.imshow("Bright mask", bright)
         cv2.imshow("Annotated", annotated)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        cv2.imwrite(output_path, annotated)
 
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            cv2.destroyAllWindows()
+            break
 
 if __name__ == "__main__":
     detect_bright_led_rings()
