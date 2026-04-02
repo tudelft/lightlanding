@@ -73,7 +73,9 @@ def detect_bright_led_rings(
             maxRadius=max_radius,
         )
 
-        circles = filter_nested_circles(circles, center_thresh=10)
+        if circles is not None:
+            circles = np.round(circles[0]).astype(int)   # shape: (N, 3)
+            circles = filter_nested_circles(circles)     # shape: (M, 3)
 
         count = 0
         if circles is not None:
@@ -102,22 +104,24 @@ def detect_bright_led_rings(
             cv2.destroyAllWindows()
             break
 
+
 def filter_nested_circles(circles, center_thresh=10):
     """
-    Remove circles that share nearly the same center (nested duplicates).
-    
-    Args:
-        circles: list of (x, y, r)
-        center_thresh: max distance between centers to consider same circle
-    
-    Returns:
-        filtered list of circles
+    Remove nested/duplicate circles with nearly the same center.
+    Keeps the largest circle among overlapping-center detections.
+
+    Input:
+        circles: numpy array of shape (N, 3)
+    Output:
+        numpy array of shape (M, 3), dtype=int
     """
     if circles is None or len(circles) == 0:
-        return []
+        return np.empty((0, 3), dtype=int)
 
-    # Sort by radius DESC → keep largest circle first
-    circles = sorted(circles, key=lambda c: c[2], reverse=True)
+    circles = np.asarray(circles, dtype=int)
+
+    # Sort by radius descending so larger circles are kept first
+    circles = circles[np.argsort(circles[:, 2])[::-1]]
 
     filtered = []
 
@@ -125,17 +129,17 @@ def filter_nested_circles(circles, center_thresh=10):
         keep = True
 
         for fx, fy, fr in filtered:
-            dist = np.sqrt((x - fx)**2 + (y - fy)**2)
+            dist = np.hypot(x - fx, y - fy)
 
-            # Same center → likely nested circle
+            # Same center => treat as duplicate/nested circle
             if dist < center_thresh:
                 keep = False
                 break
 
         if keep:
-            filtered.append((x, y, r))
+            filtered.append([x, y, r])
 
-    return filtered
+    return np.asarray(filtered, dtype=int)
 
 if __name__ == "__main__":
     detect_bright_led_rings()
