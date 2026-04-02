@@ -18,8 +18,8 @@ dist_coeffs = np.array([
 
 
 def detect_bright_led_rings(
-    brightness_threshold: int = 210,
-    min_radius: int = 3,
+    brightness_threshold: int = 190,
+    min_radius: int = 2,
     max_radius: int = 80,
 ) -> None:
 
@@ -65,10 +65,10 @@ def detect_bright_led_rings(
         circles = cv2.HoughCircles(
             masked,
             cv2.HOUGH_GRADIENT,
-            dp=1.2,
-            minDist=15,
+            dp=1.1,
+            minDist=10,
             param1=100,
-            param2=20,
+            param2=25,
             minRadius=min_radius,
             maxRadius=max_radius,
         )
@@ -79,7 +79,7 @@ def detect_bright_led_rings(
 
         count = 0
         if circles is not None:
-            circles = np.round(circles[0]).astype(int)
+#            circles = np.round(circles[0]).astype(int)
             for i, (x, y, r) in enumerate(circles, start=1):
                 cv2.circle(annotated, (x, y), r, (0, 255, 0), 2)
                 cv2.circle(annotated, (x, y), 2, (0, 0, 255), 3)
