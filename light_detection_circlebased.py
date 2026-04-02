@@ -48,6 +48,7 @@ def detect_bright_led_rings(
 
         image_undistorted = cv2.remap(frame, map1, map2, interpolation=cv2.INTER_LINEAR)
 
+        annotated = image_undistorted.copy()
         image_undistorted = cv2.cvtColor(image_undistorted, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(image_undistorted, (7, 7), 1.5)
 
