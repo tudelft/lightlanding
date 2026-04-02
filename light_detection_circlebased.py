@@ -18,7 +18,7 @@ dist_coeffs = np.array([
 
 
 def detect_bright_led_rings(
-    brightness_threshold: int = 230,
+    brightness_threshold: int = 210,
     min_radius: int = 3,
     max_radius: int = 80,
 ) -> None:
@@ -68,10 +68,12 @@ def detect_bright_led_rings(
             dp=1.2,
             minDist=15,
             param1=100,
-            param2=10,
+            param2=20,
             minRadius=min_radius,
             maxRadius=max_radius,
         )
+
+        circles = filter_nested_circles(circles, center_thresh=10)
 
         count = 0
         if circles is not None:
@@ -99,6 +101,41 @@ def detect_bright_led_rings(
         if cv2.waitKey(1) & 0xFF == ord("q"):
             cv2.destroyAllWindows()
             break
+
+def filter_nested_circles(circles, center_thresh=10):
+    """
+    Remove circles that share nearly the same center (nested duplicates).
+    
+    Args:
+        circles: list of (x, y, r)
+        center_thresh: max distance between centers to consider same circle
+    
+    Returns:
+        filtered list of circles
+    """
+    if circles is None or len(circles) == 0:
+        return []
+
+    # Sort by radius DESC → keep largest circle first
+    circles = sorted(circles, key=lambda c: c[2], reverse=True)
+
+    filtered = []
+
+    for x, y, r in circles:
+        keep = True
+
+        for fx, fy, fr in filtered:
+            dist = np.sqrt((x - fx)**2 + (y - fy)**2)
+
+            # Same center → likely nested circle
+            if dist < center_thresh:
+                keep = False
+                break
+
+        if keep:
+            filtered.append((x, y, r))
+
+    return filtered
 
 if __name__ == "__main__":
     detect_bright_led_rings()
