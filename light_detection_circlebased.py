@@ -33,7 +33,7 @@ def detect_bright_led_rings(
 
     while True:
         frame = picam2.capture_array()
-        green = frame[:, :, 1]
+        green = frame #frame[:, :, 1] # change based on RGB or mono camera
 
         # ---- Undistort frame ----
         h, w = frame.shape[:2]
