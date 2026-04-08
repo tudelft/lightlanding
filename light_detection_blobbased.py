@@ -26,7 +26,7 @@ dist_coeffs = np.array([
 def detect_leds(
     min_area: int = 5,
     max_area: int = 40000,
-    brightness_threshold: int = 150,
+    brightness_threshold: int = 160,
 ) -> None:
 
     picam2 = None
@@ -67,7 +67,6 @@ def detect_leds(
         # Undistort frame
         # -------------------------
         h, w = frame.shape[:2]
-
         map1, map2 = cv2.fisheye.initUndistortRectifyMap(
             camera_matrix,
             dist_coeffs,
@@ -99,8 +98,6 @@ def detect_leds(
         # Find contours of bright blobs
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-
-
         circles = np.empty((0, 3), dtype=np.float32) 
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -117,12 +114,16 @@ def detect_leds(
             #     continue
 
             center = (int(x), int(y))
-            radius = int(radius)
+            # radius = int(radius)
 
             circles = np.append(circles, [[x, y, radius]], axis=0)
 
+        # deterministic order
+        # order = np.lexsort((circles[:, 1], circles[:, 0]))
+        # circles = circles[order]
+        
         # fitered_circles = circles
-        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=0.1, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.01)
+        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=0.1, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.05)
 
         led_count = 0
         for circle in fitered_circles:    
@@ -176,7 +177,7 @@ def filter_circles_same_line_similar_radius(
     radius_tol: float = 0.1,
     line_tol: float = 5.0,
     min_group_size: int = 4,
-    cross_ratio_tol: float = 0.005
+    cross_ratio_tol: float = 0.01
 ) -> np.ndarray:
     """
     Keep circles that belong to a group of circles lying approximately on the
@@ -242,15 +243,12 @@ def filter_circles_same_line_similar_radius(
                 # Perpendicular distance from point to line through (x1,y1)-(x2,y2)
                 dist = abs(dy * x - dx * y + x2 * y1 - y2 * x1) / norm
 
-                mean_r = np.mean(current_radii)
+                mean_r = np.mean([r1, r2])
                 radius_ok = abs(r - mean_r) <= radius_tol * mean_r
                 line_ok = dist <= line_tol
-                print('k, line_ok, radii_ok', k, line_ok, radius_ok)
                 if line_ok and radius_ok:
                     group_indices.append(k)
                     current_radii.append(r)
-                    
-            print('group_indices', group_indices)
 
             if len(group_indices) >= min_group_size:
                 valid = False
@@ -269,16 +267,14 @@ def filter_circles_same_line_similar_radius(
                     if np.isfinite(cr) and abs(cr - 4/3) <= cross_ratio_tol:
                         valid = True
                         best_group = quad
-                        print('best_group', best_group)
-
                         break
 
                 if not valid:
-                    print(f"Group with indices {group_indices} failed cross-ratio test")
-                    return np.empty((0, 3), dtype=circles.dtype)
-
+                    continue
 
     best_group = sorted(set(best_group))
+    if len(best_group) != 4:
+        return np.empty((0, 3), dtype=circles.dtype)
 
     return circles[best_group]
 
