@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from itertools import combinations
+import math
 
 # =========================
 # Input source configuration
@@ -119,8 +120,8 @@ def detect_leds(
             circles = np.append(circles, [[x, y, radius]], axis=0)
 
         # deterministic order
-        # order = np.lexsort((circles[:, 1], circles[:, 0]))
-        # circles = circles[order]
+        order = np.lexsort((circles[:, 1], circles[:, 0]))
+        circles = circles[order]
         
         # fitered_circles = circles
         fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=0.1, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.05)
@@ -153,7 +154,22 @@ def detect_leds(
         if cv2.waitKey(1) & 0xFF == ord("q"):
             cv2.destroyAllWindows()
             break
-        
+
+
+        if (len(fitered_circles%4) == 0):
+            image_points, object_points = detections_to_points(fitered_circles)
+
+            # image_points = np.asarray(fitered_circles[:, :2], dtype=np.float64)
+            # object_points = np.array([
+            #     [0, 0, 0],
+            #     [0.5, 0.25, 0],
+            #     [0.2, 0.5, 0],
+            #     [0.8, 0.75, 0]
+            # ], dtype=np.float64)
+ 
+            pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
+            print("Estimated pose:", pose_dict["camera_position"])
+
     # finally:
     #     # -------------------------
     #     # Cleanup
@@ -212,7 +228,7 @@ def filter_circles_same_line_similar_radius(
     if n < min_group_size:
         return np.empty((0, 3), dtype=circles.dtype)
 
-    best_group = []
+    best_groups = []
 
     # Try every pair of circles as a candidate line
     for i in range(n):
@@ -253,7 +269,6 @@ def filter_circles_same_line_similar_radius(
             if len(group_indices) >= min_group_size:
                 valid = False
                 for quad in set(combinations(group_indices, 4)):
-                    print('quad', quad)
                     projections = []
                     for idx in quad:
                         x, y, _ = circles[idx]
@@ -266,17 +281,350 @@ def filter_circles_same_line_similar_radius(
                     cr = cross_ratio_1d(a, b, c, d)
                     if np.isfinite(cr) and abs(cr - 4/3) <= cross_ratio_tol:
                         valid = True
-                        best_group = quad
+                        best_groups.extend(quad)
                         break
 
                 if not valid:
                     continue
 
-    best_group = sorted(set(best_group))
-    if len(best_group) != 4:
+    best_groups = sorted(set(best_groups))
+    if (len(best_groups)%4) != 0:
         return np.empty((0, 3), dtype=circles.dtype)
 
-    return circles[best_group]
+    return circles[best_groups]
+
+
+def detections_to_points(fitered_circles):
+    """
+    Convert 8 detected LED circles into ordered 2D-3D correspondences for an L-shape.
+
+    Assumptions
+    - Input contains exactly 8 circles: (x, y, r)
+    - The LEDs form an L-shape:
+        * long arm: 5 points total including the corner  -> 4 points away from corner
+        * short arm: 4 points total including the corner -> 3 points away from corner
+    - Corner LED is one of the larger-radius LEDs
+    - Adjacent LEDs are 12.5 cm apart in 3D
+    - Corner 3D coordinate is (0, 0, 0)
+    - Long arm is mapped to +X
+    - Short arm is mapped to +Y
+
+    Parameters
+    ----------
+    fitered_circles : array-like, shape (8, 3)
+        Each row is (x, y, r)
+
+    Returns
+    -------
+    image_points : np.ndarray, shape (8, 2), dtype=np.float32
+        2D image points in the same order as object_points
+
+    object_points : np.ndarray, shape (8, 3), dtype=np.float32
+        Corresponding 3D points:
+            [0,0,0]
+            [12.5,0,0], [25,0,0], [37.5,0,0], [50,0,0]
+            [0,12.5,0], [0,25,0], [0,37.5,0]
+
+    info : dict
+        Extra debug information:
+        - "corner_index"
+        - "large_radius_indices"
+        - "small_radius_indices"
+        - "long_arm_indices"
+        - "short_arm_indices"
+        - "radius_threshold"
+    """
+    circles = np.asarray(fitered_circles, dtype=float)
+    if circles.shape != (8, 3):
+        raise ValueError(f"Expected shape (8, 3), got {circles.shape}")
+
+    pts = circles[:, :2]
+    radii = circles[:, 2]
+
+    # ------------------------------------------------------------------
+    # 1) Split circles into two radius groups using the largest gap in r
+    # ------------------------------------------------------------------
+    sort_idx = np.argsort(radii)
+    sorted_r = radii[sort_idx]
+    gaps = np.diff(sorted_r)
+
+    if len(gaps) == 0:
+        raise ValueError("Need at least 2 circles to split by radius.")
+
+    split_at = int(np.argmax(gaps))
+    radius_threshold = 0.5 * (sorted_r[split_at] + sorted_r[split_at + 1])
+
+    large_radius_indices = np.where(radii > radius_threshold)[0].tolist()
+    small_radius_indices = np.where(radii <= radius_threshold)[0].tolist()
+
+    if len(large_radius_indices) == 0:
+        raise ValueError("Could not find any large-radius LEDs. Check detections/radii.")
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def fit_line_direction(points_2d):
+        """
+        Return unit direction of best-fit line through 2D points using SVD.
+        """
+        p = np.asarray(points_2d, dtype=float)
+        c = p.mean(axis=0)
+        _, _, vt = np.linalg.svd(p - c)
+        d = vt[0]
+        d = d / np.linalg.norm(d)
+        return d
+
+    def line_fit_error_with_corner(corner_pt, arm_pts):
+        """
+        Mean squared orthogonal distance of points to the best-fit line.
+        Fits a line through [corner + arm points].
+        """
+        all_pts = np.vstack([corner_pt[None, :], arm_pts])
+        center = all_pts.mean(axis=0)
+        _, _, vt = np.linalg.svd(all_pts - center)
+        direction = vt[0]
+        direction = direction / np.linalg.norm(direction)
+
+        diffs = all_pts - center
+        # Orthogonal distance to line
+        proj = np.outer(diffs @ direction, direction)
+        ortho = diffs - proj
+        mse = np.mean(np.sum(ortho ** 2, axis=1))
+        return mse, direction
+
+    def angle_between_dirs_deg(d1, d2):
+        """
+        Acute angle between two undirected line directions in degrees.
+        """
+        c = abs(float(np.dot(d1, d2)))
+        c = np.clip(c, -1.0, 1.0)
+        angle = math.degrees(math.acos(c))
+        # Because directions are undirected, angle is in [0, 90]
+        return angle
+
+    def sort_arm_points_from_corner(corner_pt, arm_pts, arm_indices):
+        """
+        Sort arm points by increasing distance from corner.
+        """
+        d = np.linalg.norm(arm_pts - corner_pt[None, :], axis=1)
+        order = np.argsort(d)
+        return arm_pts[order], [arm_indices[i] for i in order]
+
+    # ------------------------------------------------------------------
+    # 2) Find the corner among the large-radius LEDs
+    #
+    #    We try each large-radius point as a corner candidate.
+    #    For each candidate, we partition the remaining 7 points into:
+    #      - 4 points on the long arm
+    #      - 3 points on the short arm
+    #    and score how well each group forms a line with the corner.
+    # ------------------------------------------------------------------
+    best = None
+
+    for corner_idx in large_radius_indices:
+        corner_pt = pts[corner_idx]
+        other_indices = [i for i in range(8) if i != corner_idx]
+
+        for long_combo in itertools.combinations(other_indices, 4):
+            long_indices = list(long_combo)
+            short_indices = [i for i in other_indices if i not in long_indices]
+
+            long_pts = pts[long_indices]
+            short_pts = pts[short_indices]
+
+            long_err, long_dir = line_fit_error_with_corner(corner_pt, long_pts)
+            short_err, short_dir = line_fit_error_with_corner(corner_pt, short_pts)
+            angle = angle_between_dirs_deg(long_dir, short_dir)
+
+            # Prefer near-perpendicular arms; penalize if too parallel
+            angle_penalty = 0.0
+            if angle < 35.0:
+                angle_penalty += (35.0 - angle) ** 2
+            elif angle > 90.0:
+                angle_penalty += (angle - 90.0) ** 2
+
+            # Small bonus if corner is among the larger-radius points
+            radius_bonus = -0.01 * radii[corner_idx]
+
+            score = long_err + short_err + 0.01 * angle_penalty + radius_bonus
+
+            if (best is None) or (score < best["score"]):
+                best = {
+                    "score": score,
+                    "corner_idx": corner_idx,
+                    "long_indices": long_indices,
+                    "short_indices": short_indices,
+                    "long_err": long_err,
+                    "short_err": short_err,
+                    "angle_deg": angle,
+                }
+
+    if best is None:
+        raise ValueError("Could not identify a valid L-shape configuration.")
+
+    # ------------------------------------------------------------------
+    # 3) Sort points along each arm from the corner outward
+    # ------------------------------------------------------------------
+    corner_idx = best["corner_idx"]
+    corner_pt = pts[corner_idx]
+
+    long_pts = pts[best["long_indices"]]
+    short_pts = pts[best["short_indices"]]
+
+    long_pts_sorted, long_indices_sorted = sort_arm_points_from_corner(
+        corner_pt, long_pts, best["long_indices"]
+    )
+    short_pts_sorted, short_indices_sorted = sort_arm_points_from_corner(
+        corner_pt, short_pts, best["short_indices"]
+    )
+
+    # ------------------------------------------------------------------
+    # 4) Build ordered 2D image points
+    #
+    # Order convention:
+    #   0: corner
+    #   1..4: long arm (+X)
+    #   5..7: short arm (+Y)
+    # ------------------------------------------------------------------
+    image_points = np.vstack([
+        corner_pt[None, :],
+        long_pts_sorted,
+        short_pts_sorted
+    ]).astype(np.float32)
+
+    # 3D object points in cm
+    object_points = np.array([
+        [0.0,  0.0,  0.0],   # corner
+        [12.5, 0.0,  0.0],
+        [25.0, 0.0,  0.0],
+        [37.5, 0.0,  0.0],
+        [50.0, 0.0,  0.0],   # long arm
+
+        [0.0,  12.5, 0.0],
+        [0.0,  25.0, 0.0],
+        [0.0,  37.5, 0.0],   # short arm
+    ], dtype=np.float32)
+
+    info = {
+        "corner_index": corner_idx,
+        "large_radius_indices": large_radius_indices,
+        "small_radius_indices": small_radius_indices,
+        "long_arm_indices": long_indices_sorted,
+        "short_arm_indices": short_indices_sorted,
+        "radius_threshold": float(radius_threshold),
+        "fit_score": float(best["score"]),
+        "arm_angle_deg": float(best["angle_deg"]),
+    }
+
+    return image_points, object_points, info
+
+def reprojection_error(object_points, image_points, rvec, tvec, K, dist_coeffs):
+    projected, _ = cv2.projectPoints(
+        object_points, rvec, tvec, K, dist_coeffs
+    )
+    projected = projected.reshape(-1, 2)
+    err = np.mean(np.linalg.norm(projected - image_points, axis=1))
+    return err, projected
+
+
+def camera_position_from_pose(R, tvec):
+    """
+    OpenCV pose convention:
+        X_cam = R * X_obj + t
+    Camera center in object coordinates:
+        C_obj = -R^T * t
+    """
+    return -R.T @ tvec
+
+
+def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
+    """
+    Estimate pose for coplanar object points.
+
+    Parameters
+    ----------
+    object_points : (N,3) ndarray
+        Coplanar 3D points, usually all Z=0.
+    image_points : (N,2) ndarray
+        Corresponding pixel coordinates.
+    K : (3,3) ndarray
+        Camera intrinsic matrix.
+    dist_coeffs : ndarray or None
+        Distortion coefficients. Set to zeros if unknown.
+
+    Returns
+    -------
+    result : dict
+        Contains pose, reprojection error, and camera position.
+    """
+    object_points = np.ascontiguousarray(object_points, dtype=np.float64).reshape(-1, 3)
+    image_points = np.ascontiguousarray(image_points, dtype=np.float64).reshape(-1, 2)
+
+    K = np.asarray(K, dtype=np.float64)
+
+    if object_points.shape[0] < 4:
+        raise ValueError("Need at least 4 points")
+    if image_points.shape[0] != object_points.shape[0]:
+        raise ValueError("image_points and object_points must match in count")
+
+    # IPPE is designed for planar pose estimation.
+    success, rvec, tvec = cv2.solvePnP(
+        object_points,
+        image_points,
+        K,
+        dist_coeffs,
+        flags=cv2.SOLVEPNP_IPPE
+    )
+
+    if not success:
+        # Fallback to iterative
+        success, rvec, tvec = cv2.solvePnP(
+            object_points,
+            image_points,
+            K,
+            dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE
+        )
+
+    if not success:
+        return {"success": False}
+
+    # Optional refinement
+    success, rvec, tvec = cv2.solvePnP(
+        object_points,
+        image_points,
+        K,
+        dist_coeffs,
+        rvec=rvec,
+        tvec=tvec,
+        useExtrinsicGuess=True,
+        flags=cv2.SOLVEPNP_ITERATIVE
+    )
+
+    R, _ = cv2.Rodrigues(rvec)
+    err, projected = reprojection_error(
+        object_points, image_points, rvec, tvec, K, dist_coeffs
+    )
+    cam_pos = camera_position_from_pose(R, tvec)
+
+    # Check that all points are in front of the camera
+    pts_cam = (R @ object_points.T + tvec).T
+    positive_depth = np.all(pts_cam[:, 2] > 0)
+
+    return {
+        "success": True,
+        "rvec": rvec,
+        "tvec": tvec,
+        "R": R,
+        "camera_position": cam_pos,
+        "reprojection_error": err,
+        "projected_points": projected,
+        "positive_depth": positive_depth,
+        "points_camera_frame": pts_cam,
+    }
+
+def detections_to_points(fitered_circles):
+
 
 if __name__ == "__main__":
     detect_leds()
