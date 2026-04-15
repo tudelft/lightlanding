@@ -1,13 +1,15 @@
+import time
 import cv2
 import numpy as np
 from itertools import combinations
 import math
+# from pymavlink import mavutil
 
 # =========================
 # Input source configuration
 # =========================
 USE_VIDEO_FILE = True          # True = read from video, False = use RPi camera
-VIDEO_PATH = "lightrecording.mp4" # Path to video file when USE_VIDEO_FILE=True
+VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 
 # intrinsics and distortion parameters
 camera_matrix = np.array([
@@ -29,6 +31,10 @@ def detect_leds(
     max_area: int = 40000,
     brightness_threshold: int = 160,
 ) -> None:
+
+
+    # m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
+    # m.wait_heartbeat()
 
     picam2 = None
     cap = None
@@ -59,8 +65,11 @@ def detect_leds(
             if not ret:
                 print("End of video or failed to read frame.")
                 break
+            else:
+                timestamp = int(time.time()*1e6)
         else:
             frame = picam2.capture_array()
+            timestamp = int(time.time()*1e6)
 
         green = frame  # or frame[:, :, 1] if you want the green channel only
 
@@ -83,6 +92,9 @@ def detect_leds(
         green_undistorted = cv2.remap(
             green, map1, map2, interpolation=cv2.INTER_LINEAR
         )
+
+        # image_undistorted = cv2.rotate(image_undistorted, cv2.ROTATE_90_CLOCKWISE)  # Rotate if needed based on camera orientation
+        # green_undistorted = cv2.rotate(green_undistorted, cv2.ROTATE_90_CLOCKWISE)  # Rotate if needed based on camera orientation
 
         annotated = image_undistorted.copy()
         green_undistorted = cv2.cvtColor(green_undistorted, cv2.COLOR_BGR2GRAY)
@@ -124,7 +136,7 @@ def detect_leds(
         circles = circles[order]
         
         # fitered_circles = circles
-        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=0.1, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.05)
+        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=0.5, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.05)
 
         led_count = 0
         for circle in fitered_circles:    
@@ -145,7 +157,7 @@ def detect_leds(
 
             led_count += 1
 
-        print(f"Detected LEDs: {led_count}")
+        # print(f"Detected LEDs: {led_count}")
 
         # Show images
         cv2.imshow("Threshold", thresh)
@@ -155,21 +167,28 @@ def detect_leds(
             cv2.destroyAllWindows()
             break
 
+        # print(len(fitered_circles), "circles after line/radius filtering")
+        if (len(fitered_circles) == 8):
+            # print("Attempting pose estimation with", len(fitered_circles), "circles...")
+            image_points, object_points, info = detections_to_points(fitered_circles)
+            # print("2D-3D correspondences:", len(image_points), len(object_points))
 
-        if (len(fitered_circles%4) == 0):
-            image_points, object_points = detections_to_points(fitered_circles)
+            if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
+                pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
+                # print('Reprojection error:', pose_dict["reprojection_error"])
+                print("Estimated pose:", pose_dict["camera_position"]) if pose_dict["reprojection_error"] < 2.0 else print("Pose estimation failed")
+                cam_to_w_xyz = p = pose_dict["camera_position"]
+                cam_to_w_quat = q = pose_dict["camera_orientation"]
 
-            # image_points = np.asarray(fitered_circles[:, :2], dtype=np.float64)
-            # object_points = np.array([
-            #     [0, 0, 0],
-            #     [0.5, 0.25, 0],
-            #     [0.2, 0.5, 0],
-            #     [0.8, 0.75, 0]
-            # ], dtype=np.float64)
- 
-            pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
-            print("Estimated pose:", pose_dict["camera_position"])
-
+                # m.mav.odometry_send(
+                #     timestamp,
+                #     mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
+                #     mavutil.mavlink.MAV_FRAME_BODY_FRD,
+                #     *p, [q[3], q[0], q[1], q[2]],              # MAVLink wants w,x,y,z
+                #     0,0,0, 0,0,0,
+                #     [float('nan')]+[0]*20, [float('nan')]+[0]*20,
+                #     0, mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION, 100
+                # )
     # finally:
     #     # -------------------------
     #     # Cleanup
@@ -262,6 +281,7 @@ def filter_circles_same_line_similar_radius(
                 mean_r = np.mean([r1, r2])
                 radius_ok = abs(r - mean_r) <= radius_tol * mean_r
                 line_ok = dist <= line_tol
+                # print('line_ok, radius_ok', line_ok, radius_ok)
                 if line_ok and radius_ok:
                     group_indices.append(k)
                     current_radii.append(r)
@@ -280,19 +300,22 @@ def filter_circles_same_line_similar_radius(
 
                     cr = cross_ratio_1d(a, b, c, d)
                     if np.isfinite(cr) and abs(cr - 4/3) <= cross_ratio_tol:
+                        # print('cross_ratio_tol_ok:', 'True')
                         valid = True
                         best_groups.extend(quad)
                         break
 
                 if not valid:
+                    # print('cross_ratio_tol_ok:', 'False')
                     continue
 
     best_groups = sorted(set(best_groups))
+    print('len(best_groups)', len(best_groups))
+
     if (len(best_groups)%4) != 0:
         return np.empty((0, 3), dtype=circles.dtype)
 
     return circles[best_groups]
-
 
 def detections_to_points(fitered_circles):
     """
@@ -425,7 +448,7 @@ def detections_to_points(fitered_circles):
         corner_pt = pts[corner_idx]
         other_indices = [i for i in range(8) if i != corner_idx]
 
-        for long_combo in itertools.combinations(other_indices, 4):
+        for long_combo in combinations(other_indices, 4):
             long_indices = list(long_combo)
             short_indices = [i for i in other_indices if i not in long_indices]
 
@@ -438,13 +461,13 @@ def detections_to_points(fitered_circles):
 
             # Prefer near-perpendicular arms; penalize if too parallel
             angle_penalty = 0.0
-            if angle < 35.0:
+            if angle < 60.0:
                 angle_penalty += (35.0 - angle) ** 2
             elif angle > 90.0:
                 angle_penalty += (angle - 90.0) ** 2
 
             # Small bonus if corner is among the larger-radius points
-            radius_bonus = -0.01 * radii[corner_idx]
+            radius_bonus = -0.1 * radii[corner_idx]
 
             score = long_err + short_err + 0.01 * angle_penalty + radius_bonus
 
@@ -495,14 +518,14 @@ def detections_to_points(fitered_circles):
     # 3D object points in cm
     object_points = np.array([
         [0.0,  0.0,  0.0],   # corner
-        [12.5, 0.0,  0.0],
-        [25.0, 0.0,  0.0],
-        [37.5, 0.0,  0.0],
-        [50.0, 0.0,  0.0],   # long arm
+        [0.125, 0.0,  0.0],
+        [0.250, 0.0,  0.0],
+        [0.375, 0.0,  0.0],
+        [0.500, 0.0,  0.0],   # long arm
 
-        [0.0,  12.5, 0.0],
-        [0.0,  25.0, 0.0],
-        [0.0,  37.5, 0.0],   # short arm
+        [0.0,  -0.125, 0.0],
+        [0.0,  -0.250, 0.0],
+        [0.0,  -0.375, 0.0],   # short arm
     ], dtype=np.float32)
 
     info = {
@@ -602,6 +625,8 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     )
 
     R, _ = cv2.Rodrigues(rvec)
+    cam_orient = R.T  # Camera orientation in world coordinates
+    cam_orient_quat = R.from_matrix(cam_orient).as_quat()  # (x, y, z, w)
     err, projected = reprojection_error(
         object_points, image_points, rvec, tvec, K, dist_coeffs
     )
@@ -617,13 +642,13 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         "tvec": tvec,
         "R": R,
         "camera_position": cam_pos,
+        "camera_orientation": cam_orient_quat,
         "reprojection_error": err,
         "projected_points": projected,
         "positive_depth": positive_depth,
         "points_camera_frame": pts_cam,
     }
 
-def detections_to_points(fitered_circles):
 
 
 if __name__ == "__main__":
