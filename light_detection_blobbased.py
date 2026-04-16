@@ -3,12 +3,13 @@ import cv2
 import numpy as np
 from itertools import combinations
 import math
-# from pymavlink import mavutil
+from scipy.spatial.transform import Rotation as R
+from pymavlink import mavutil
 
 # =========================
 # Input source configuration
 # =========================
-USE_VIDEO_FILE = True          # True = read from video, False = use RPi camera
+USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 
 # intrinsics and distortion parameters
@@ -29,12 +30,12 @@ dist_coeffs = np.array([
 def detect_leds(
     min_area: int = 5,
     max_area: int = 40000,
-    brightness_threshold: int = 160,
+    brightness_threshold: int = 200,
 ) -> None:
 
 
-    # m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
-    # m.wait_heartbeat()
+    m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
+    m.wait_heartbeat()
 
     picam2 = None
     cap = None
@@ -136,7 +137,7 @@ def detect_leds(
         circles = circles[order]
         
         # fitered_circles = circles
-        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=0.5, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.05)
+        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=5, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.05)
 
         led_count = 0
         for circle in fitered_circles:    
@@ -180,15 +181,15 @@ def detect_leds(
                 cam_to_w_xyz = p = pose_dict["camera_position"]
                 cam_to_w_quat = q = pose_dict["camera_orientation"]
 
-                # m.mav.odometry_send(
-                #     timestamp,
-                #     mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
-                #     mavutil.mavlink.MAV_FRAME_BODY_FRD,
-                #     *p, [q[3], q[0], q[1], q[2]],              # MAVLink wants w,x,y,z
-                #     0,0,0, 0,0,0,
-                #     [float('nan')]+[0]*20, [float('nan')]+[0]*20,
-                #     0, mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION, 100
-                # )
+                m.mav.odometry_send(
+                    timestamp,
+                    mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
+                    mavutil.mavlink.MAV_FRAME_BODY_FRD,
+                    *p, [q[3], q[0], q[1], q[2]],              # MAVLink wants w,x,y,z
+                    0,0,0, 0,0,0,
+                    [float('nan')]+[0]*20, [float('nan')]+[0]*20,
+                    0, mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION, 100
+                )
     # finally:
     #     # -------------------------
     #     # Cleanup
@@ -550,14 +551,14 @@ def reprojection_error(object_points, image_points, rvec, tvec, K, dist_coeffs):
     return err, projected
 
 
-def camera_position_from_pose(R, tvec):
+def camera_position_from_pose(Rot, tvec):
     """
     OpenCV pose convention:
         X_cam = R * X_obj + t
     Camera center in object coordinates:
         C_obj = -R^T * t
     """
-    return -R.T @ tvec
+    return -Rot.T @ tvec
 
 
 def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
@@ -624,23 +625,23 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         flags=cv2.SOLVEPNP_ITERATIVE
     )
 
-    R, _ = cv2.Rodrigues(rvec)
-    cam_orient = R.T  # Camera orientation in world coordinates
+    R_mat, _ = cv2.Rodrigues(rvec)
+    cam_orient = R_mat.T  # Camera orientation in world coordinates
     cam_orient_quat = R.from_matrix(cam_orient).as_quat()  # (x, y, z, w)
     err, projected = reprojection_error(
         object_points, image_points, rvec, tvec, K, dist_coeffs
     )
-    cam_pos = camera_position_from_pose(R, tvec)
+    cam_pos = camera_position_from_pose(R_mat, tvec)
 
     # Check that all points are in front of the camera
-    pts_cam = (R @ object_points.T + tvec).T
+    pts_cam = (R_mat @ object_points.T + tvec).T
     positive_depth = np.all(pts_cam[:, 2] > 0)
 
     return {
         "success": True,
         "rvec": rvec,
         "tvec": tvec,
-        "R": R,
+        "R": R_mat,
         "camera_position": cam_pos,
         "camera_orientation": cam_orient_quat,
         "reprojection_error": err,
