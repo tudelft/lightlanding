@@ -4,6 +4,10 @@ import numpy as np
 from itertools import combinations
 import math
 from scipy.spatial.transform import Rotation as R
+import os
+
+os.environ["MAVLINK20"] = "1"
+os.environ["MAVLINK_DIALECT"] = "common"
 from pymavlink import mavutil
 
 # =========================
@@ -181,7 +185,7 @@ def detect_leds(
                 cam_to_w_xyz = p = pose_dict["camera_position"]
                 cam_to_w_quat = q = pose_dict["camera_orientation"]
 
-                m.mav.odometry_send(
+                msg = mavutil.mavlink.MAVLink_odometry_message(
                     timestamp,
                     mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
                     mavutil.mavlink.MAV_FRAME_BODY_FRD,
@@ -190,6 +194,7 @@ def detect_leds(
                     [float('nan')]+[0]*20, [float('nan')]+[0]*20,
                     0, mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION, 100
                 )
+                m.mav.send(msg)
     # finally:
     #     # -------------------------
     #     # Cleanup
@@ -463,9 +468,9 @@ def detections_to_points(fitered_circles):
             # Prefer near-perpendicular arms; penalize if too parallel
             angle_penalty = 0.0
             if angle < 60.0:
-                angle_penalty += (35.0 - angle) ** 2
-            elif angle > 90.0:
-                angle_penalty += (angle - 90.0) ** 2
+                angle_penalty += (60.0 - angle) ** 2
+            elif angle > 95.0:
+                angle_penalty += (angle - 95.0) ** 2
 
             # Small bonus if corner is among the larger-radius points
             radius_bonus = -0.1 * radii[corner_idx]
