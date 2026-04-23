@@ -32,7 +32,7 @@ dist_coeffs = np.array([
 
 
 def detect_leds(
-    min_area: int = 5,
+    min_area: int = 1,
     max_area: int = 40000,
     brightness_threshold: int = 200,
 ) -> None:
@@ -41,6 +41,104 @@ def detect_leds(
     m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
     m.wait_heartbeat()
 
+    # Example: Delft, NL
+    LAT_DEG = 51.99042
+    LON_DEG = 4.37549
+    ALT_M = 500.0   # MSL altitude in meters
+
+    def wait_cmd_ack(master, command_id, timeout=3.0):
+        start = time.time()
+        while time.time() - start < timeout:
+            msg = master.recv_match(type="COMMAND_ACK", blocking=True, timeout=0.5)
+            if msg and msg.command == command_id:
+                return msg
+        return None
+
+    def request_message(master, msg_id):
+        master.mav.command_long_send(
+            master.target_system,
+            master.target_component,
+            mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
+            0,
+            float(msg_id), 0, 0, 0, 0, 0, 0
+        )
+
+    def recv_one(master, msg_type, timeout=2.0):
+        start = time.time()
+        while time.time() - start < timeout:
+            msg = master.recv_match(type=msg_type, blocking=True, timeout=0.5)
+            if msg:
+                return msg
+        return None
+
+    def set_global_origin(master, LAT_DEG, LON_DEG, ALT_M):
+        target_system = master.target_system
+        target_component = master.target_component
+        
+        lat_int = int(LAT_DEG * 1e7)
+        lon_int = int(LON_DEG * 1e7)
+        alt_mm = int(ALT_M * 1000)
+
+        print("Sending SET_GPS_GLOBAL_ORIGIN...")
+        master.mav.set_gps_global_origin_send(
+            target_system,
+            lat_int,
+            lon_int,
+            alt_mm,
+            int(time.time() * 1e6)  # time_usec
+        )
+
+#        time.sleep(5)
+
+        #print("Sending MAV_CMD_DO_SET_HOME...")
+        master.mav.command_long_send(
+            target_system,
+            target_component,
+            mavutil.mavlink.MAV_CMD_DO_SET_HOME,
+            0,          # confirmation
+            0,          # param1: 0 = use specified location, 1 = use current
+            math.nan,   # param2: roll
+            math.nan,   # param3: pitch
+            math.nan,   # param4: yaw
+            LAT_DEG,    # param5: latitude in degrees
+            LON_DEG,    # param6: longitude in degrees
+            ALT_M       # param7: altitude in meters (MSL)
+        )
+
+        ack = wait_cmd_ack(master, mavutil.mavlink.MAV_CMD_DO_SET_HOME, timeout=5.0)
+        
+        if ack:
+            print(f"SET_HOME ACK result: {ack.result}")
+        else:
+            print("No COMMAND_ACK received for MAV_CMD_DO_SET_HOME")
+
+        # Ask PX4 to send back the values it currently believes
+        print("Requesting GPS_GLOBAL_ORIGIN and HOME_POSITION...")
+        request_message(master, mavutil.mavlink.MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN)
+        request_message(master, mavutil.mavlink.MAVLINK_MSG_ID_HOME_POSITION)
+
+        gps_origin = recv_one(master, "GPS_GLOBAL_ORIGIN", timeout=3.0)
+        home_pos = recv_one(master, "HOME_POSITION", timeout=3.0)
+
+        if gps_origin:
+            print("GPS_GLOBAL_ORIGIN received:")
+            print(f"  lat={gps_origin.latitude / 1e7}")
+            print(f"  lon={gps_origin.longitude / 1e7}")
+            print(f"  alt_msl_m={gps_origin.altitude / 1000.0}")
+        else:
+            print("No GPS_GLOBAL_ORIGIN received")
+
+        if home_pos:
+            print("HOME_POSITION received:")
+            print(f"  lat={home_pos.latitude / 1e7}")
+            print(f"  lon={home_pos.longitude / 1e7}")
+            print(f"  alt_msl_m={home_pos.altitude / 1000.0}")
+            print(f"  local_x={home_pos.x} local_y={home_pos.y} local_z={home_pos.z}")
+        else:
+            print("No HOME_POSITION received")
+            
+        return None
+            
     picam2 = None
     cap = None
 
@@ -61,6 +159,9 @@ def detect_leds(
         picam2.start()
 
     # try:
+    start_time = time.time()
+    global_tf_set = False 
+    
     while True:
         # -------------------------
         # Read frame
@@ -136,12 +237,14 @@ def detect_leds(
 
             circles = np.append(circles, [[x, y, radius]], axis=0)
 
+        print('total circles', len(circles))
         # deterministic order
         order = np.lexsort((circles[:, 1], circles[:, 0]))
         circles = circles[order]
         
         # fitered_circles = circles
-        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=5, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.05)
+        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=50, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.03) #cr: 0.015
+        print('filtered circles', len(fitered_circles))
 
         led_count = 0
         for circle in fitered_circles:    
@@ -181,20 +284,29 @@ def detect_leds(
             if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
                 pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
                 # print('Reprojection error:', pose_dict["reprojection_error"])
-                print("Estimated pose:", pose_dict["camera_position"]) if pose_dict["reprojection_error"] < 2.0 else print("Pose estimation failed")
+                print("Estimated pose:", pose_dict["camera_position"]) if pose_dict["reprojection_error"] < 10 else print("Pose estimation failed")
                 cam_to_w_xyz = p = pose_dict["camera_position"]
                 cam_to_w_quat = q = pose_dict["camera_orientation"]
 
-                msg = mavutil.mavlink.MAVLink_odometry_message(
-                    timestamp,
-                    mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
-                    mavutil.mavlink.MAV_FRAME_BODY_FRD,
-                    *p, [q[3], q[0], q[1], q[2]],              # MAVLink wants w,x,y,z
-                    0,0,0, 0,0,0,
-                    [float('nan')]+[0]*20, [float('nan')]+[0]*20,
-                    0, mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION, 100
-                )
-                m.mav.send(msg)
+                if ((time.time() - start_time >= 5) and not global_tf_set):
+                    set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
+                    global_tf_set = True 
+                    
+                if (time.time() - start_time >= 10):
+                    msg = mavutil.mavlink.MAVLink_odometry_message(
+                        timestamp,
+                        mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+                        mavutil.mavlink.MAV_FRAME_BODY_FRD,
+                        *p, [q[3], q[0], q[1], q[2]],              # MAVLink wants w,x,y,z
+                        float('nan'),float('nan'),float('nan'), float('nan'),float('nan'),float('nan'),
+                        [float('nan')]+[0]*20, [float('nan')]+[0]*20,
+                        0, mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
+                    )
+                    m.mav.send(msg)
+                    time.sleep(1/30.0)
+
+
+                    
     # finally:
     #     # -------------------------
     #     # Cleanup
@@ -316,7 +428,7 @@ def filter_circles_same_line_similar_radius(
                     continue
 
     best_groups = sorted(set(best_groups))
-    print('len(best_groups)', len(best_groups))
+    #print('len(best_groups)', len(best_groups))
 
     if (len(best_groups)%4) != 0:
         return np.empty((0, 3), dtype=circles.dtype)
@@ -469,7 +581,7 @@ def detections_to_points(fitered_circles):
             angle_penalty = 0.0
             if angle < 60.0:
                 angle_penalty += (60.0 - angle) ** 2
-            elif angle > 95.0:
+            elif angle > 100.0:
                 angle_penalty += (angle - 95.0) ** 2
 
             # Small bonus if corner is among the larger-radius points

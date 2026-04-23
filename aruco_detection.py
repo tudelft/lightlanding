@@ -24,7 +24,7 @@ dist_coeffs = np.array([
      0.00861141
 ], dtype=np.float32)
 
-marker_size = 0.105   # meters
+marker_size = 0.075   # meters
 target_id = 13
 
 # ArUco setup
