@@ -34,7 +34,7 @@ dist_coeffs = np.array([
 def detect_leds(
     min_area: int = 1,
     max_area: int = 40000,
-    brightness_threshold: int = 200,
+    brightness_threshold: int = 130,
 ) -> None:
 
 
@@ -157,7 +157,7 @@ def detect_leds(
         )
         picam2.configure(config)
         controls = {
-        "ExposureTime": 1000,   # microseconds
+        "ExposureTime": 4000,   # microseconds
         "AnalogueGain": 1.0}
         picam2.set_controls(controls)
         picam2.start()
@@ -248,7 +248,7 @@ def detect_leds(
         circles = circles[order]
         
         # fitered_circles = circles
-        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=50, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.03) #cr: 0.015
+        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=0.5, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.02) #cr: 0.015
         print('filtered circles', len(fitered_circles))
 
         led_count = 0
@@ -293,11 +293,11 @@ def detect_leds(
                 cam_to_w_xyz = p = pose_dict["camera_position"]
                 cam_to_w_quat = q = pose_dict["camera_orientation"]
 
-                if ((time.time() - start_time >= 5) and not global_tf_set):
-                    set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
-                    global_tf_set = True 
+#                if ((time.time() - start_time >= 5) and not global_tf_set):
+#                    set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
+#                    global_tf_set = True 
                     
-                if (time.time() - start_time >= 10):
+                if (time.time() - start_time >= 1):
                     msg = mavutil.mavlink.MAVLink_odometry_message(
                         timestamp,
                         mavutil.mavlink.MAV_FRAME_LOCAL_NED,
@@ -305,7 +305,7 @@ def detect_leds(
                         *p, [q[3], q[0], q[1], q[2]],              # MAVLink wants w,x,y,z
                         float('nan'),float('nan'),float('nan'), float('nan'),float('nan'),float('nan'),
                         [float('nan')]+[0]*20, [float('nan')]+[0]*20,
-                        0, mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
+                        0, mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION, 0
                     )
                     m.mav.send(msg)
                     time.sleep(1/30.0)
@@ -433,10 +433,10 @@ def filter_circles_same_line_similar_radius(
                     continue
 
     best_groups = sorted(set(best_groups))
-    #print('len(best_groups)', len(best_groups))
+    print('len(best_groups)', len(best_groups))
 
-    if (len(best_groups)%4) != 0:
-        return np.empty((0, 3), dtype=circles.dtype)
+#    if (len(best_groups)%4) != 0:
+#        return np.empty((0, 3), dtype=circles.dtype)
 
     return circles[best_groups]
 
