@@ -302,10 +302,35 @@ def detect_leds(
                         timestamp,
                         mavutil.mavlink.MAV_FRAME_LOCAL_NED,
                         mavutil.mavlink.MAV_FRAME_BODY_FRD,
-                        *p, [q[3], q[0], q[1], q[2]],              # MAVLink wants w,x,y,z
-                        float('nan'),float('nan'),float('nan'), float('nan'),float('nan'),float('nan'),
-                        [float('nan')]+[0]*20, [float('nan')]+[0]*20,
-                        0, mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION, 0
+                        *p,
+                        [q[3], q[0], q[1], q[2]],  # w, x, y, z
+
+                        # velocity (
+                        float('nan'), float('nan'), float('nan'),
+                        float('nan'), float('nan'), float('nan'),
+
+                        # pose covariance (6x6 upper triangle = 21 values)
+                        [
+                            0.01, 0, 0, 0, 0, 0,
+                            0.01, 0, 0, 0, 0,
+                            0.02, 0, 0, 0,
+                            0.01, 0, 0,
+                            0.01, 0,
+                            0.03
+                        ],
+
+                        # velocity covariance
+                        [
+                            0.02, 0, 0, 0, 0, 0,
+                            0.02, 0, 0, 0, 0,
+                            0.04, 0, 0, 0,
+                            0.02, 0, 0,
+                            0.02, 0,
+                            0.04
+                        ],
+
+                        100,  # quality
+                        mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
                     )
                     m.mav.send(msg)
                     time.sleep(1/30.0)
