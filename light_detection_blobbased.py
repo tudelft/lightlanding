@@ -156,7 +156,12 @@ def detect_leds(
             main={"size": (1456, 1088), "format": "RGB888"}
         )
         picam2.configure(config)
+        controls = {
+        "ExposureTime": 1000,   # microseconds
+        "AnalogueGain": 1.0}
+        picam2.set_controls(controls)
         picam2.start()
+
 
     # try:
     start_time = time.time()
