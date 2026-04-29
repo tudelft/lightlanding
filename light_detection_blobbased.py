@@ -34,7 +34,7 @@ dist_coeffs = np.array([
 def detect_leds(
     min_area: int = 1,
     max_area: int = 40000,
-    brightness_threshold: int = 130,
+    brightness_threshold: int = 200,
 ) -> None:
 
 
@@ -44,7 +44,7 @@ def detect_leds(
     # Example: Delft, NL
     LAT_DEG = 51.99042
     LON_DEG = 4.37549
-    ALT_M = 500.0   # MSL altitude in meters
+    ALT_M = 5.0   # MSL altitude in meters
 
     def wait_cmd_ack(master, command_id, timeout=3.0):
         start = time.time()
@@ -291,7 +291,7 @@ def detect_leds(
                 # print('Reprojection error:', pose_dict["reprojection_error"])
                 print("Estimated pose:", pose_dict["camera_position"]) if pose_dict["reprojection_error"] < 10 else print("Pose estimation failed")
                 cam_to_w_xyz = p = pose_dict["camera_position"]
-                cam_to_w_quat = q = pose_dict["camera_orientation"]
+                body_to_w_quat = q = pose_dict["R_body_to_w"]
 
 #                if ((time.time() - start_time >= 5) and not global_tf_set):
 #                    set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
@@ -300,7 +300,7 @@ def detect_leds(
                 if (time.time() - start_time >= 1):
                     msg = mavutil.mavlink.MAVLink_odometry_message(
                         timestamp,
-                        mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+                        mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
                         mavutil.mavlink.MAV_FRAME_BODY_FRD,
                         *p,
                         [q[3], q[0], q[1], q[2]],  # w, x, y, z
@@ -773,7 +773,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     )
 
     R_mat, _ = cv2.Rodrigues(rvec)
-    cam_orient = R_mat.T  # Camera orientation in world coordinates
+    R_cam_to_w = R_mat.T  # Camera orientation in world coordinates
     cam_orient_quat = R.from_matrix(cam_orient).as_quat()  # (x, y, z, w)
     err, projected = reprojection_error(
         object_points, image_points, rvec, tvec, K, dist_coeffs
@@ -784,6 +784,14 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     pts_cam = (R_mat @ object_points.T + tvec).T
     positive_depth = np.all(pts_cam[:, 2] > 0)
 
+    R_cam_to_body = np.array([
+    [ 0, -1,  0],
+    [ 1,  0,  0],
+    [ 0,  0,  1],
+])
+    
+    R_body_to_w = R_cam_to_w @ R_cam_to_body.T
+    
     return {
         "success": True,
         "rvec": rvec,
@@ -791,6 +799,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         "R": R_mat,
         "camera_position": cam_pos,
         "camera_orientation": cam_orient_quat,
+        "R_body_to_w": R_body_to_w,
         "reprojection_error": err,
         "projected_points": projected,
         "positive_depth": positive_depth,
