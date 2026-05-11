@@ -17,24 +17,33 @@ USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 
 # intrinsics and distortion parameters
+
 camera_matrix = np.array([
-    [966.94734754,   0.0,         717.76863491],
-    [0.0,            965.39535141, 509.88724998],
-    [0.0,            0.0,         1.0]
+ [945.96219367,   0.,         717.28307584],
+ [  0.,         946.10396713, 518.68139474],
+ [  0.,           0.,           1.        ]
 ], dtype=np.float32)
 
-dist_coeffs = np.array([
-    -0.12461181,
-     0.00088134,
-    -0.01019451,
-     0.00861141
-], dtype=np.float32)
+dist_coeffs = np.array([-0.13099568,  0.03684271, -0.03382802,  0.00052171], dtype=np.float32)
+
+#camera_matrix = np.array([
+#    [966.94734754,   0.0,         717.76863491],
+#    [0.0,            965.39535141, 509.88724998],
+#    [0.0,            0.0,         1.0]
+#], dtype=np.float32)
+
+#dist_coeffs = np.array([
+#    -0.12461181,
+#     0.00088134,
+#    -0.01019451,
+#     0.00861141
+#], dtype=np.float32)
 
 
 def detect_leds(
     min_area: int = 1,
     max_area: int = 40000,
-    brightness_threshold: int = 200,
+    brightness_threshold: int = 220,
 ) -> None:
 
 
@@ -198,15 +207,15 @@ def detect_leds(
             cv2.CV_16SC2,
         )
 
-        image_undistorted = cv2.remap(
-            frame, map1, map2, interpolation=cv2.INTER_LINEAR
-        )
-        green_undistorted = cv2.remap(
-            green, map1, map2, interpolation=cv2.INTER_LINEAR
-        )
+#        image_undistorted = cv2.remap(
+#            frame, map1, map2, interpolation=cv2.INTER_LINEAR  # MZ make sure to recompute the intrinsics if uncommenting this
+#        )
+#        green_undistorted = cv2.remap(
+#            green, map1, map2, interpolation=cv2.INTER_LINEAR
+#        )
 
-        # image_undistorted = cv2.rotate(image_undistorted, cv2.ROTATE_90_CLOCKWISE)  # Rotate if needed based on camera orientation
-        # green_undistorted = cv2.rotate(green_undistorted, cv2.ROTATE_90_CLOCKWISE)  # Rotate if needed based on camera orientation
+        image_undistorted = frame
+        green_undistorted = green
 
         annotated = image_undistorted.copy()
         green_undistorted = cv2.cvtColor(green_undistorted, cv2.COLOR_BGR2GRAY)
@@ -297,9 +306,9 @@ def detect_leds(
                 pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
                 # print('Reprojection error:', pose_dict["reprojection_error"])
                 print('Reprojection error:', pose_dict["reprojection_error"])
-                print("Estimated pose:", pose_dict["camera_position"][0], pose_dict["camera_position"][1], pose_dict["camera_position"][2]) if (pose_dict["reprojection_error"] < 60 and pose_dict["positive_depth"]) else print("Pose estimation failed")
+                print("Estimated pose:", pose_dict["camera_position"][0], pose_dict["camera_position"][1], pose_dict["camera_position"][2]) if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]) else print("Pose estimation failed")
                 cam_to_w_xyz = p = pose_dict["camera_position"]
-                body_to_w_quat = q = pose_dict["R_body_to_w"]
+                body_to_w_quat = q = pose_dict["camera_orientation"]
 
 #                if ((time.time() - start_time >= 5) and not global_tf_set):
 #                    set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
