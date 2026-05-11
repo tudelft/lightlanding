@@ -297,7 +297,7 @@ def detect_leds(
                 pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
                 # print('Reprojection error:', pose_dict["reprojection_error"])
                 print('Reprojection error:', pose_dict["reprojection_error"])
-                print("Estimated pose:", pose_dict["camera_position"]) if pose_dict["reprojection_error"] < 60 else print("Pose estimation failed")
+                print("Estimated pose:", pose_dict["camera_position"][0], pose_dict["camera_position"][1], pose_dict["camera_position"][2]) if pose_dict["reprojection_error"] < 60 else print("Pose estimation failed")
                 cam_to_w_xyz = p = pose_dict["camera_position"]
                 body_to_w_quat = q = pose_dict["R_body_to_w"]
 
@@ -780,34 +780,49 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         flags=cv2.SOLVEPNP_ITERATIVE
     )
 
-    R_mat, _ = cv2.Rodrigues(rvec)
-    R_cam_to_w = R_mat.T  # Camera orientation in world coordinates
-    cam_orient_quat = R.from_matrix(R_cam_to_w).as_quat()  # (x, y, z, w)
+    R_wld_to_cam, _ = cv2.Rodrigues(rvec)
+
+    T_wld_to_cam = np.eye(4)
+    T_wld_to_cam[:3, :3] = R_wld_to_cam
+    T_wld_to_cam[:3, 3] = tvec.flatten()
+
+    # Invert transform
+    T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
+
+    # R_mat, _ = cv2.Rodrigues(rvec)
+    # R_cam_to_w = R_mat.T  # Camera orientation in world coordinates
+    # cam_orient_quat = R.from_matrix(R_cam_to_w).as_quat()  # (x, y, z, w)
+
     err, projected = reprojection_error(
         object_points, image_points, rvec, tvec, K, dist_coeffs
     )
-    cam_pos = camera_position_from_pose(R_mat, tvec)
+    # cam_pos = camera_position_from_pose(R_mat, tvec)
 
     # Check that all points are in front of the camera
-    pts_cam = (R_mat @ object_points.T + tvec).T
+    pts_cam = (R_wld_to_cam @ object_points.T + tvec).T
     positive_depth = np.all(pts_cam[:, 2] > 0)
 
-    R_cam_to_body = np.array([
-    [ 0, -1,  0],
-    [ 1,  0,  0],
-    [ 0,  0,  1],
-])
+    T_cam_to_drone = np.array([
+        [ 0, -1,  0, 0],
+        [ 1,  0,  0, 0],
+        [ 0,  0,  1, 0],
+        [ 0,  0,  0, 1],
+    ])
     
-    R_body_to_w = R_cam_to_w @ R_cam_to_body.T
-    R_body_to_w_quat =  R.from_matrix(R_body_to_w).as_quat()  # (x, y, z, w)
+    T_drone_to_wld = T_cam_to_wld @ T_cam_to_drone.T
+
+    cam_pos = T_cam_to_wld[:3, 3]
+    cam_orient_quat = R.from_matrix(T_cam_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
+    # R_body_to_w = R_cam_to_w @ R_cam_to_body.T
+    # R_body_to_w_quat =  R.from_matrix(R_body_to_w).as_quat()  # (x, y, z, w)
+
     return {
         "success": True,
         "rvec": rvec,
         "tvec": tvec,
-        "R": R_mat,
+        "R": R_wld_to_cam,
         "camera_position": cam_pos,
         "camera_orientation": cam_orient_quat,
-        "R_body_to_w": R_body_to_w_quat,
         "reprojection_error": err,
         "projected_points": projected,
         "positive_depth": positive_depth,
