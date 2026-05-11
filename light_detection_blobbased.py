@@ -182,6 +182,7 @@ def detect_leds(
             frame = picam2.capture_array()
             timestamp = int(time.time()*1e6)
 
+        frame = cv2.rotate(frame, cv2.ROTATE_180)
         green = frame  # or frame[:, :, 1] if you want the green channel only
 
         # -------------------------
@@ -273,8 +274,14 @@ def detect_leds(
         # print(f"Detected LEDs: {led_count}")
 
         # Show images
-        cv2.imshow("Threshold", thresh)
-        cv2.imshow("Annotated LEDs", annotated)
+        cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Thresholded', 700, 700) 
+        cv2.imshow("Thresholded", thresh)
+        cv2.waitKey(1)
+        
+        cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Annotated', 700, 700) 
+        cv2.imshow("Annotated", annotated)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             cv2.destroyAllWindows()
@@ -289,7 +296,8 @@ def detect_leds(
             if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
                 pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
                 # print('Reprojection error:', pose_dict["reprojection_error"])
-                print("Estimated pose:", pose_dict["camera_position"]) if pose_dict["reprojection_error"] < 10 else print("Pose estimation failed")
+                print('Reprojection error:', pose_dict["reprojection_error"])
+                print("Estimated pose:", pose_dict["camera_position"]) if pose_dict["reprojection_error"] < 60 else print("Pose estimation failed")
                 cam_to_w_xyz = p = pose_dict["camera_position"]
                 body_to_w_quat = q = pose_dict["R_body_to_w"]
 
@@ -774,7 +782,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
 
     R_mat, _ = cv2.Rodrigues(rvec)
     R_cam_to_w = R_mat.T  # Camera orientation in world coordinates
-    cam_orient_quat = R.from_matrix(cam_orient).as_quat()  # (x, y, z, w)
+    cam_orient_quat = R.from_matrix(R_cam_to_w).as_quat()  # (x, y, z, w)
     err, projected = reprojection_error(
         object_points, image_points, rvec, tvec, K, dist_coeffs
     )
@@ -791,7 +799,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
 ])
     
     R_body_to_w = R_cam_to_w @ R_cam_to_body.T
-    
+    R_body_to_w_quat =  R.from_matrix(R_body_to_w).as_quat()  # (x, y, z, w)
     return {
         "success": True,
         "rvec": rvec,
@@ -799,7 +807,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         "R": R_mat,
         "camera_position": cam_pos,
         "camera_orientation": cam_orient_quat,
-        "R_body_to_w": R_body_to_w,
+        "R_body_to_w": R_body_to_w_quat,
         "reprojection_error": err,
         "projected_points": projected,
         "positive_depth": positive_depth,
