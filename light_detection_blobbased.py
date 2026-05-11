@@ -746,24 +746,23 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     if image_points.shape[0] != object_points.shape[0]:
         raise ValueError("image_points and object_points must match in count")
 
-    # IPPE is designed for planar pose estimation.
+    # # IPPE is designed for planar pose estimation.
+    # success, rvec, tvec = cv2.solvePnP(
+    #     object_points,
+    #     image_points,
+    #     K,
+    #     dist_coeffs,
+    #     flags=cv2.SOLVEPNP_IPPE
+    # )
+
+        # Fallback to iterative
     success, rvec, tvec = cv2.solvePnP(
         object_points,
         image_points,
         K,
         dist_coeffs,
-        flags=cv2.SOLVEPNP_IPPE
+        flags=cv2.SOLVEPNP_ITERATIVE
     )
-
-    if not success:
-        # Fallback to iterative
-        success, rvec, tvec = cv2.solvePnP(
-            object_points,
-            image_points,
-            K,
-            dist_coeffs,
-            flags=cv2.SOLVEPNP_ITERATIVE
-        )
 
     if not success:
         return {"success": False}
@@ -809,7 +808,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         [ 0,  0,  0, 1],
     ])
     
-    T_drone_to_wld = T_cam_to_wld @ T_cam_to_drone.T
+    T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
 
     cam_pos = T_cam_to_wld[:3, 3]
     cam_orient_quat = R.from_matrix(T_cam_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
