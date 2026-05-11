@@ -297,7 +297,7 @@ def detect_leds(
                 pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
                 # print('Reprojection error:', pose_dict["reprojection_error"])
                 print('Reprojection error:', pose_dict["reprojection_error"])
-                print("Estimated pose:", pose_dict["camera_position"][0], pose_dict["camera_position"][1], pose_dict["camera_position"][2]) if pose_dict["reprojection_error"] < 60 else print("Pose estimation failed")
+                print("Estimated pose:", pose_dict["camera_position"][0], pose_dict["camera_position"][1], pose_dict["camera_position"][2]) if (pose_dict["reprojection_error"] < 60 and pose_dict["positive_depth"]) else print("Pose estimation failed")
                 cam_to_w_xyz = p = pose_dict["camera_position"]
                 body_to_w_quat = q = pose_dict["R_body_to_w"]
 
@@ -746,23 +746,23 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     if image_points.shape[0] != object_points.shape[0]:
         raise ValueError("image_points and object_points must match in count")
 
-    # # IPPE is designed for planar pose estimation.
-    # success, rvec, tvec = cv2.solvePnP(
-    #     object_points,
-    #     image_points,
-    #     K,
-    #     dist_coeffs,
-    #     flags=cv2.SOLVEPNP_IPPE
-    # )
-
-        # Fallback to iterative
+    # IPPE is designed for planar pose estimation.
     success, rvec, tvec = cv2.solvePnP(
         object_points,
         image_points,
         K,
         dist_coeffs,
-        flags=cv2.SOLVEPNP_ITERATIVE
+        flags=cv2.SOLVEPNP_IPPE
     )
+    if not success:
+        # Fallback to iterative
+        success, rvec, tvec = cv2.solvePnP(
+            object_points,
+            image_points,
+            K,
+            dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE
+        )
 
     if not success:
         return {"success": False}
