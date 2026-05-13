@@ -14,38 +14,24 @@ from pymavlink import mavutil
 # =========================
 # Input source configuration
 # =========================
-USE_VIDEO_FILE = True          # True = read from video, False = use RPi camera
-CONNECT_MAVLINK = False             # Whether to connect to MAVLink and send odometry messages
+USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
+CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 
 # intrinsics and distortion parameters
 
 camera_matrix = np.array([
- [945.96219367,   0.,         717.28307584],
- [  0.,         946.10396713, 518.68139474],
- [  0.,           0.,           1.        ]
-], dtype=np.float32)
+ [975.77317088,   0.,         716.37283008],
+ [  0.,         974.8115937,  522.97850855],
+ [  0.,           0.,           1.,        ]]
+)
 
-dist_coeffs = np.array([-0.13099568,  0.03684271, -0.03382802,  0.00052171], dtype=np.float32)
-
-#camera_matrix = np.array([
-#    [966.94734754,   0.0,         717.76863491],
-#    [0.0,            965.39535141, 509.88724998],
-#    [0.0,            0.0,         1.0]
-#], dtype=np.float32)
-
-#dist_coeffs = np.array([
-#    -0.12461181,
-#     0.00088134,
-#    -0.01019451,
-#     0.00861141
-#], dtype=np.float32)
-
+dist_coeffs = np.array([-0.1527729,   0.09656486, -0.17091717,  0.10037008], dtype=np.float32)
 
 def detect_leds(
     min_area: int = 1,
     max_area: int = 40000,
-    brightness_threshold: int = 180,
+    brightness_threshold: int = 120,
 ) -> None:
 
     if CONNECT_MAVLINK:
@@ -174,11 +160,18 @@ def detect_leds(
         picam2.start()
 
 
-    # try:
+	# try:
     global_tf_set = False 
-    
+		
+    cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Thresholded', 700, 700) 
+
+    cv2.waitKey(5)
+    cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Annotated', 700, 700) 
+		
     while True:
-        # -------------------------
+		# -------------------------
         # Read frame
         # -------------------------
         if USE_VIDEO_FILE:
@@ -216,7 +209,7 @@ def detect_leds(
 #            green, map1, map2, interpolation=cv2.INTER_LINEAR  # MZ make sure to recompute the intrinsics if uncommenting this
 #        )
 
-        blurred = cv2.GaussianBlur(frame, (7, 7), 0)
+        blurred = cv2.GaussianBlur(frame, (21, 21), 0)
         annotated = blurred.copy()
         
         blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
@@ -260,38 +253,32 @@ def detect_leds(
         circles = circles[order]
         
         # fitered_circles = circles
-        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=0.5, line_tol=5.0, min_group_size=4, cross_ratio_tol=0.02) #cr: 0.015
+        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=0.5, line_tol=10.0, min_group_size=4, cross_ratio_tol=0.025) #cr: 0.015
         print('filtered circles', len(fitered_circles))
 
-        led_count = 0
-        for circle in fitered_circles:    
-            # Draw annotation
-            center = (int(circle[0]), int(circle[1]))
-            radius = int(circle[2])
-            cv2.circle(annotated, center, radius + 1, (0, 255, 0), 2)
-            cv2.putText(
-                annotated,
-                f"LED {led_count + 1}",
-                (center[0] + 5, center[1] - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 0),
-                1,
-                cv2.LINE_AA,
-            )
+#        led_count = 0
+#        for circle in fitered_circles:    
+#            # Draw annotation
+#            center = (int(circle[0]), int(circle[1]))
+#            radius = int(circle[2])
+#            cv2.circle(annotated, center, radius + 1, (0, 255, 0), 2)
+#            cv2.putText(
+#                annotated,
+#                f"LED {led_count + 1}",
+#                (center[0] + 5, center[1] - 5),
+#                cv2.FONT_HERSHEY_SIMPLEX,
+#                0.5,
+#                (0, 255, 0),
+#                1,
+#                cv2.LINE_AA,
+#            )
 
-            led_count += 1
+#           led_count += 1
 
         # print(f"Detected LEDs: {led_count}")
 
         # Show images
-        cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Thresholded', 700, 700) 
         cv2.imshow("Thresholded", thresh)
-        cv2.waitKey(1)
-        
-        cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Annotated', 700, 700) 
         cv2.imshow("Annotated", annotated)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -303,6 +290,34 @@ def detect_leds(
             # print("Attempting pose estimation with", len(fitered_circles), "circles...")
             image_points, object_points, info = order_l_shape_markers(fitered_circles)
             # print("2D-3D correspondences:", len(image_points), len(object_points))
+            
+            led_count = 0
+            for image_point in image_points:    
+			   # Draw annotation
+               center = (int(image_point[0]), int(image_point[1]))
+               print('center', center)
+               cv2.circle(annotated, center, 10, (0, 255, 0), 2)
+               cv2.putText(
+                annotated,
+                f"LED {led_count + 1}",
+                (center[0] + 5, center[1] - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 0),
+                1,
+                cv2.LINE_AA,
+               )
+               led_count += 1
+               cv2.imshow("Annotated", annotated)
+               if cv2.waitKey(1) & 0xFF == ord("q"):
+                  cv2.destroyAllWindows()
+                  break
+            
+               print(f"Detected LEDs: {led_count}")
+
+			   # Show images
+#               cv2.imshow("Thresholded", thresh)
+
 
             if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
                 pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
@@ -484,7 +499,94 @@ def filter_circles_same_line_similar_radius(
 
     return circles[best_groups]
 
+import numpy as np
+from scipy.spatial.distance import cdist
+
 def order_l_shape_markers(circles):
+    pts = np.array(circles)[:, :2].astype(np.float32)
+    dist_matrix = cdist(pts, pts)
+    
+    # --- 1. Find the Corner using Local Geometry ---
+    # For each point, find its two closest neighbors and calculate the angle
+    # The corner will have neighbors forming roughly a 90-degree angle.
+    best_corner_idx = -1
+    min_angle_diff = float('inf')
+    
+    for i in range(len(pts)):
+        # Get indices of two closest points (excluding self)
+        nearest_indices = np.argsort(dist_matrix[i])[1:3]
+        p1, p2 = pts[nearest_indices[0]], pts[nearest_indices[1]]
+        
+        # Vectors from current point to neighbors
+        v1 = p1 - pts[i]
+        v2 = p2 - pts[i]
+        
+        # Calculate angle between vectors
+        unit_v1 = v1 / np.linalg.norm(v1)
+        unit_v2 = v2 / np.linalg.norm(v2)
+        dot_product = np.clip(np.dot(unit_v1, unit_v2), -1.0, 1.0)
+        angle = np.arccos(dot_product)
+        
+        # We want the angle closest to pi/2 (90 degrees)
+        diff = abs(angle - np.pi/2)
+        if diff < min_angle_diff:
+            min_angle_diff = diff
+            best_corner_idx = i
+
+    corner = pts[best_corner_idx]
+    
+    # --- 2. Separate Arms ---
+    other_indices = [i for i in range(8) if i != best_corner_idx]
+    others = pts[other_indices]
+    vectors = others - corner
+    
+    # Use the point furthest from the corner to define the "Long Arm" vector
+    farthest_idx = np.argmax(np.linalg.norm(vectors, axis=1))
+    long_vec_ref = vectors[farthest_idx]
+    
+    # Group points by checking alignment with the long_vec_ref
+    # Points on the same arm will have a very high cosine similarity (near 1.0)
+    cos_sims = np.dot(vectors, long_vec_ref) / (np.linalg.norm(vectors, axis=1) * np.linalg.norm(long_vec_ref))
+    
+    # The 4 points with the highest similarity belong to the long arm
+    long_arm_mask = np.argsort(cos_sims)[-4:]
+    short_arm_mask = np.argsort(cos_sims)[:3]
+    
+    long_indices = np.array(other_indices)[long_arm_mask]
+    short_indices = np.array(other_indices)[short_arm_mask]
+    
+    # --- 3. Sort by distance from corner ---
+    def sort_by_dist(idx_list):
+        dists = np.linalg.norm(pts[idx_list] - corner, axis=1)
+        return np.array(idx_list)[np.argsort(dists)]
+
+    sorted_long = sort_by_dist(long_indices)
+    sorted_short = sort_by_dist(short_indices)
+    
+    # Combine into final array [0=corner, 1-4=long, 5-7=short]
+    final_indices = [best_corner_idx] + list(sorted_long) + list(sorted_short)
+    
+    image_points = pts[final_indices].astype(np.float32)
+    print(image_points)
+        # 3D object points in cm
+    object_points = np.array([
+        [0.0,  0.0,  0.0],   # corner
+        [0.125, 0.0,  0.0],
+        [0.250, 0.0,  0.0],
+        [0.375, 0.0,  0.0],
+        [0.500, 0.0,  0.0],   # long arm
+
+        [0.0,  -0.125, 0.0],
+        [0.0,  -0.250, 0.0],
+        [0.0,  -0.375, 0.0],   # short arm
+    ], dtype=np.float32)
+
+    info = {
+    }
+
+    return image_points, object_points, info    
+
+def order_l_shape_markers_old(circles):
     """
     Orders 8 circles [x, y, r] into the L-shape convention.
     0: Corner
@@ -554,7 +656,7 @@ def order_l_shape_markers(circles):
     # 4. Final Assembly
     final_indices = [corner_idx] + list(sorted_long_indices) + list(sorted_short_indices)
     image_points = pts[final_indices]
-    
+    print(image_points)
         # 3D object points in cm
     object_points = np.array([
         [0.0,  0.0,  0.0],   # corner
