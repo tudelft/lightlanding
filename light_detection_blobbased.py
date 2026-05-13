@@ -5,6 +5,7 @@ from itertools import combinations
 import math
 from scipy.spatial.transform import Rotation as R
 import os
+from scipy.spatial.distance import cdist
 
 os.environ["MAVLINK20"] = "1"
 os.environ["MAVLINK_DIALECT"] = "common"
@@ -13,7 +14,8 @@ from pymavlink import mavutil
 # =========================
 # Input source configuration
 # =========================
-USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
+USE_VIDEO_FILE = True          # True = read from video, False = use RPi camera
+CONNECT_MAVLINK = False             # Whether to connect to MAVLink and send odometry messages
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 
 # intrinsics and distortion parameters
@@ -43,111 +45,111 @@ dist_coeffs = np.array([-0.13099568,  0.03684271, -0.03382802,  0.00052171], dty
 def detect_leds(
     min_area: int = 1,
     max_area: int = 40000,
-    brightness_threshold: int = 220,
+    brightness_threshold: int = 180,
 ) -> None:
 
+    if CONNECT_MAVLINK:
+        m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
+        m.wait_heartbeat()
 
-    m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
-    m.wait_heartbeat()
+        # Example: Delft, NL
+        LAT_DEG = 51.99042
+        LON_DEG = 4.37549
+        ALT_M = 5.0   # MSL altitude in meters
 
-    # Example: Delft, NL
-    LAT_DEG = 51.99042
-    LON_DEG = 4.37549
-    ALT_M = 5.0   # MSL altitude in meters
+        def wait_cmd_ack(master, command_id, timeout=3.0):
+            start = time.time()
+            while time.time() - start < timeout:
+                msg = master.recv_match(type="COMMAND_ACK", blocking=True, timeout=0.5)
+                if msg and msg.command == command_id:
+                    return msg
+            return None
 
-    def wait_cmd_ack(master, command_id, timeout=3.0):
-        start = time.time()
-        while time.time() - start < timeout:
-            msg = master.recv_match(type="COMMAND_ACK", blocking=True, timeout=0.5)
-            if msg and msg.command == command_id:
-                return msg
-        return None
+        def request_message(master, msg_id):
+            master.mav.command_long_send(
+                master.target_system,
+                master.target_component,
+                mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
+                0,
+                float(msg_id), 0, 0, 0, 0, 0, 0
+            )
 
-    def request_message(master, msg_id):
-        master.mav.command_long_send(
-            master.target_system,
-            master.target_component,
-            mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE,
-            0,
-            float(msg_id), 0, 0, 0, 0, 0, 0
-        )
+        def recv_one(master, msg_type, timeout=2.0):
+            start = time.time()
+            while time.time() - start < timeout:
+                msg = master.recv_match(type=msg_type, blocking=True, timeout=0.5)
+                if msg:
+                    return msg
+            return None
 
-    def recv_one(master, msg_type, timeout=2.0):
-        start = time.time()
-        while time.time() - start < timeout:
-            msg = master.recv_match(type=msg_type, blocking=True, timeout=0.5)
-            if msg:
-                return msg
-        return None
-
-    def set_global_origin(master, LAT_DEG, LON_DEG, ALT_M):
-        target_system = master.target_system
-        target_component = master.target_component
-        
-        lat_int = int(LAT_DEG * 1e7)
-        lon_int = int(LON_DEG * 1e7)
-        alt_mm = int(ALT_M * 1000)
-
-        print("Sending SET_GPS_GLOBAL_ORIGIN...")
-        master.mav.set_gps_global_origin_send(
-            target_system,
-            lat_int,
-            lon_int,
-            alt_mm,
-            int(time.time() * 1e6)  # time_usec
-        )
-
-#        time.sleep(5)
-
-        #print("Sending MAV_CMD_DO_SET_HOME...")
-        master.mav.command_long_send(
-            target_system,
-            target_component,
-            mavutil.mavlink.MAV_CMD_DO_SET_HOME,
-            0,          # confirmation
-            0,          # param1: 0 = use specified location, 1 = use current
-            math.nan,   # param2: roll
-            math.nan,   # param3: pitch
-            math.nan,   # param4: yaw
-            LAT_DEG,    # param5: latitude in degrees
-            LON_DEG,    # param6: longitude in degrees
-            ALT_M       # param7: altitude in meters (MSL)
-        )
-
-        ack = wait_cmd_ack(master, mavutil.mavlink.MAV_CMD_DO_SET_HOME, timeout=5.0)
-        
-        if ack:
-            print(f"SET_HOME ACK result: {ack.result}")
-        else:
-            print("No COMMAND_ACK received for MAV_CMD_DO_SET_HOME")
-
-        # Ask PX4 to send back the values it currently believes
-        print("Requesting GPS_GLOBAL_ORIGIN and HOME_POSITION...")
-        request_message(master, mavutil.mavlink.MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN)
-        request_message(master, mavutil.mavlink.MAVLINK_MSG_ID_HOME_POSITION)
-
-        gps_origin = recv_one(master, "GPS_GLOBAL_ORIGIN", timeout=3.0)
-        home_pos = recv_one(master, "HOME_POSITION", timeout=3.0)
-
-        if gps_origin:
-            print("GPS_GLOBAL_ORIGIN received:")
-            print(f"  lat={gps_origin.latitude / 1e7}")
-            print(f"  lon={gps_origin.longitude / 1e7}")
-            print(f"  alt_msl_m={gps_origin.altitude / 1000.0}")
-        else:
-            print("No GPS_GLOBAL_ORIGIN received")
-
-        if home_pos:
-            print("HOME_POSITION received:")
-            print(f"  lat={home_pos.latitude / 1e7}")
-            print(f"  lon={home_pos.longitude / 1e7}")
-            print(f"  alt_msl_m={home_pos.altitude / 1000.0}")
-            print(f"  local_x={home_pos.x} local_y={home_pos.y} local_z={home_pos.z}")
-        else:
-            print("No HOME_POSITION received")
+        def set_global_origin(master, LAT_DEG, LON_DEG, ALT_M):
+            target_system = master.target_system
+            target_component = master.target_component
             
-        return None
+            lat_int = int(LAT_DEG * 1e7)
+            lon_int = int(LON_DEG * 1e7)
+            alt_mm = int(ALT_M * 1000)
+
+            print("Sending SET_GPS_GLOBAL_ORIGIN...")
+            master.mav.set_gps_global_origin_send(
+                target_system,
+                lat_int,
+                lon_int,
+                alt_mm,
+                int(time.time() * 1e6)  # time_usec
+            )
+
+    #        time.sleep(5)
+
+            #print("Sending MAV_CMD_DO_SET_HOME...")
+            master.mav.command_long_send(
+                target_system,
+                target_component,
+                mavutil.mavlink.MAV_CMD_DO_SET_HOME,
+                0,          # confirmation
+                0,          # param1: 0 = use specified location, 1 = use current
+                math.nan,   # param2: roll
+                math.nan,   # param3: pitch
+                math.nan,   # param4: yaw
+                LAT_DEG,    # param5: latitude in degrees
+                LON_DEG,    # param6: longitude in degrees
+                ALT_M       # param7: altitude in meters (MSL)
+            )
+
+            ack = wait_cmd_ack(master, mavutil.mavlink.MAV_CMD_DO_SET_HOME, timeout=5.0)
             
+            if ack:
+                print(f"SET_HOME ACK result: {ack.result}")
+            else:
+                print("No COMMAND_ACK received for MAV_CMD_DO_SET_HOME")
+
+            # Ask PX4 to send back the values it currently believes
+            print("Requesting GPS_GLOBAL_ORIGIN and HOME_POSITION...")
+            request_message(master, mavutil.mavlink.MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN)
+            request_message(master, mavutil.mavlink.MAVLINK_MSG_ID_HOME_POSITION)
+
+            gps_origin = recv_one(master, "GPS_GLOBAL_ORIGIN", timeout=3.0)
+            home_pos = recv_one(master, "HOME_POSITION", timeout=3.0)
+
+            if gps_origin:
+                print("GPS_GLOBAL_ORIGIN received:")
+                print(f"  lat={gps_origin.latitude / 1e7}")
+                print(f"  lon={gps_origin.longitude / 1e7}")
+                print(f"  alt_msl_m={gps_origin.altitude / 1000.0}")
+            else:
+                print("No GPS_GLOBAL_ORIGIN received")
+
+            if home_pos:
+                print("HOME_POSITION received:")
+                print(f"  lat={home_pos.latitude / 1e7}")
+                print(f"  lon={home_pos.longitude / 1e7}")
+                print(f"  alt_msl_m={home_pos.altitude / 1000.0}")
+                print(f"  local_x={home_pos.x} local_y={home_pos.y} local_z={home_pos.z}")
+            else:
+                print("No HOME_POSITION received")
+                
+            return None
+                
     picam2 = None
     cap = None
 
@@ -173,7 +175,6 @@ def detect_leds(
 
 
     # try:
-    start_time = time.time()
     global_tf_set = False 
     
     while True:
@@ -192,7 +193,7 @@ def detect_leds(
             timestamp = int(time.time()*1e6)
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
-        green = frame  # or frame[:, :, 1] if you want the green channel only
+        # green = frame  # or frame[:, :, 1] if you want the green channel only
 
         # -------------------------
         # Undistort frame
@@ -210,16 +211,17 @@ def detect_leds(
 #        image_undistorted = cv2.remap(
 #            frame, map1, map2, interpolation=cv2.INTER_LINEAR  # MZ make sure to recompute the intrinsics if uncommenting this
 #        )
+
 #        green_undistorted = cv2.remap(
-#            green, map1, map2, interpolation=cv2.INTER_LINEAR
+#            green, map1, map2, interpolation=cv2.INTER_LINEAR  # MZ make sure to recompute the intrinsics if uncommenting this
 #        )
 
-        image_undistorted = frame
-        green_undistorted = green
+        blurred = cv2.GaussianBlur(frame, (7, 7), 0)
+        annotated = blurred.copy()
+        
+        blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
 
-        annotated = image_undistorted.copy()
-        green_undistorted = cv2.cvtColor(green_undistorted, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(green_undistorted, (7, 7), 1.5)
+        # green_undistorted = cv2.cvtColor(green_undistorted, cv2.COLOR_BGR2GRAY)
 
         # Threshold bright regions (likely LEDs)
         _, thresh = cv2.threshold(blurred, brightness_threshold, 255, cv2.THRESH_BINARY)
@@ -299,7 +301,7 @@ def detect_leds(
         # print(len(fitered_circles), "circles after line/radius filtering")
         if (len(fitered_circles) == 8):
             # print("Attempting pose estimation with", len(fitered_circles), "circles...")
-            image_points, object_points, info = detections_to_points(fitered_circles)
+            image_points, object_points, info = order_l_shape_markers(fitered_circles)
             # print("2D-3D correspondences:", len(image_points), len(object_points))
 
             if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
@@ -313,8 +315,8 @@ def detect_leds(
 #                if ((time.time() - start_time >= 5) and not global_tf_set):
 #                    set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
 #                    global_tf_set = True 
-                    
-                if (time.time() - start_time >= 1):
+            
+                if CONNECT_MAVLINK:        
                     msg = mavutil.mavlink.MAVLink_odometry_message(
                         timestamp,
                         mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
@@ -328,11 +330,11 @@ def detect_leds(
 
                         # pose covariance (6x6 upper triangle = 21 values)
                         [
-                            0.01, 0, 0, 0, 0, 0,
-                            0.01, 0, 0, 0, 0,
-                            0.02, 0, 0, 0,
-                            0.01, 0, 0,
-                            0.01, 0,
+                            0.02, 0, 0, 0, 0, 0,
+                            0.02, 0, 0, 0, 0,
+                            0.03, 0, 0, 0,
+                            0.02, 0, 0,
+                            0.02, 0,
                             0.03
                         ],
 
@@ -482,7 +484,99 @@ def filter_circles_same_line_similar_radius(
 
     return circles[best_groups]
 
-def detections_to_points(fitered_circles):
+def order_l_shape_markers(circles):
+    """
+    Orders 8 circles [x, y, r] into the L-shape convention.
+    0: Corner
+    1-4: Long arm (+X direction)
+    5-7: Short arm (+Y direction)
+    """
+    # Extract only (x, y) coordinates
+    pts = np.array(circles)[:, :2].astype(np.float32)
+    
+    # 1. Find the Corner
+    # The corner is the point that minimizes the sum of distances to all other points
+    # while maintaining the L-structure. More simply, it's the point where 
+    # the two furthest points in the set form a right-ish angle.
+    dist_matrix = cdist(pts, pts)
+    
+    # In an L-shape, the corner is the point that has two "ends" far away.
+    # We identify the corner by finding the point that is 'central' to the connectivity.
+    # For 8 points, the corner is the only point with two neighbors in an L-grid.
+    # A reliable way: The corner is the point that, when removed, leaves two 
+    # separate clusters (the arms).
+    
+    # Let's find the corner by looking for the point that has the smallest 
+    # maximum distance to any other point (the most "central" in the L-bend).
+    corner_idx = np.argmin(np.max(dist_matrix, axis=1))
+    corner = pts[corner_idx]
+    
+    # 2. Separate the arms
+    # Remaining 7 points
+    others_mask = np.arange(8) != corner_idx
+    others = pts[others_mask]
+    other_indices = np.where(others_mask)[0]
+    
+    # Calculate vectors from corner to all other points
+    vectors = others - corner
+    
+    # Use PCA or simple clustering on the angles to separate the two arms
+    angles = np.arctan2(vectors[:, 1], vectors[:, 0])
+    
+    # Since it's an L-shape, the angles will cluster into two groups ~90 degrees apart.
+    # We'll use the simplest heuristic: find the point furthest from the corner.
+    # That must be the end of the LONG arm.
+    farthest_idx_in_others = np.argmax(np.linalg.norm(vectors, axis=1))
+    long_arm_end_vec = vectors[farthest_idx_in_others]
+    
+    # Points whose vectors are more aligned with the long_arm_end_vec belong to the long arm
+    cos_sim = np.dot(vectors, long_arm_end_vec) / (
+        np.linalg.norm(vectors, axis=1) * np.linalg.norm(long_arm_end_vec)
+    )
+    
+    # Threshold similarity to split the 7 points into 4 (long) and 3 (short)
+    # We sort by similarity and take the top 4 as the long arm
+    long_arm_mask = np.argsort(cos_sim)[-4:]
+    short_arm_mask = np.argsort(cos_sim)[:3]
+    
+    long_arm_pts_indices = other_indices[long_arm_mask]
+    short_arm_pts_indices = other_indices[short_arm_mask]
+    
+    # 3. Sort points within arms by distance from corner
+    long_arm_pts = pts[long_arm_pts_indices]
+    dist_long = np.linalg.norm(long_arm_pts - corner, axis=1)
+    sorted_long_indices = long_arm_pts_indices[np.argsort(dist_long)]
+    
+    short_arm_pts = pts[short_arm_pts_indices]
+    dist_short = np.linalg.norm(short_arm_pts - corner, axis=1)
+    sorted_short_indices = short_arm_pts_indices[np.argsort(dist_short)]
+    
+    # 4. Final Assembly
+    final_indices = [corner_idx] + list(sorted_long_indices) + list(sorted_short_indices)
+    image_points = pts[final_indices]
+    
+        # 3D object points in cm
+    object_points = np.array([
+        [0.0,  0.0,  0.0],   # corner
+        [0.125, 0.0,  0.0],
+        [0.250, 0.0,  0.0],
+        [0.375, 0.0,  0.0],
+        [0.500, 0.0,  0.0],   # long arm
+
+        [0.0,  -0.125, 0.0],
+        [0.0,  -0.250, 0.0],
+        [0.0,  -0.375, 0.0],   # short arm
+    ], dtype=np.float32)
+
+    info = {
+        "corner_index": corner_idx,
+        "long_arm_indices": sorted_long_indices,
+        "short_arm_indices": sorted_short_indices,
+    }
+
+    return image_points, object_points, info
+
+def detections_to_points_diffradiicircles(fitered_circles): # when the two arms have LEDs that have different radii, we can use that to help identify the corner and arm assignment. The corner is likely among the larger-radius LEDs, and the two arms can be separated by their radius groups. This can be more robust when the L-shape is viewed at an angle where the arms are foreshortened and angles are less reliable.
     """
     Convert 8 detected LED circles into ordered 2D-3D correspondences for an L-shape.
 
@@ -816,11 +910,12 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         [ 0,  0,  1, 0],
         [ 0,  0,  0, 1],
     ])
-    
-    T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
 
-    cam_pos = T_cam_to_wld[:3, 3]
-    cam_orient_quat = R.from_matrix(T_cam_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
+    T_drone_to_wld = T_cam_to_wld 
+    # T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
+
+    cam_pos = T_drone_to_wld[:3, 3]
+    cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
     # R_body_to_w = R_cam_to_w @ R_cam_to_body.T
     # R_body_to_w_quat =  R.from_matrix(R_body_to_w).as_quat()  # (x, y, z, w)
 
