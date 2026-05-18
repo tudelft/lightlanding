@@ -31,7 +31,7 @@ dist_coeffs = np.array([-0.1527729,   0.09656486, -0.17091717,  0.10037008], dty
 def detect_leds(
     min_area: int = 1,
     max_area: int = 40000,
-    brightness_threshold: int = 120,
+    brightness_threshold: int = 80,
 ) -> None:
 
     if CONNECT_MAVLINK:
@@ -162,13 +162,14 @@ def detect_leds(
 
 	# try:
     global_tf_set = False 
+    start_time = time.time()
 		
-    cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('Thresholded', 700, 700) 
+#    cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
+#    cv2.resizeWindow('Thresholded', 700, 700) 
 
-    cv2.waitKey(5)
-    cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('Annotated', 700, 700) 
+#    cv2.waitKey(1)
+#    cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
+#    cv2.resizeWindow('Annotated', 700, 700) 
 		
     while True:
 		# -------------------------
@@ -278,12 +279,12 @@ def detect_leds(
         # print(f"Detected LEDs: {led_count}")
 
         # Show images
-        cv2.imshow("Thresholded", thresh)
-        cv2.imshow("Annotated", annotated)
+#        cv2.imshow("Thresholded", thresh)
+#        cv2.imshow("Annotated", annotated)
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            cv2.destroyAllWindows()
-            break
+#        if cv2.waitKey(1) & 0xFF == ord("q"):
+#            cv2.destroyAllWindows()
+#            break
 
         # print(len(fitered_circles), "circles after line/radius filtering")
         if (len(fitered_circles) == 8):
@@ -292,31 +293,28 @@ def detect_leds(
             # print("2D-3D correspondences:", len(image_points), len(object_points))
             
             led_count = 0
-            for image_point in image_points:    
-			   # Draw annotation
-               center = (int(image_point[0]), int(image_point[1]))
-               print('center', center)
-               cv2.circle(annotated, center, 10, (0, 255, 0), 2)
-               cv2.putText(
-                annotated,
-                f"LED {led_count + 1}",
-                (center[0] + 5, center[1] - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 0),
-                1,
-                cv2.LINE_AA,
-               )
-               led_count += 1
-               cv2.imshow("Annotated", annotated)
-               if cv2.waitKey(1) & 0xFF == ord("q"):
-                  cv2.destroyAllWindows()
-                  break
+#            for image_point in image_points:    
+#			   # Draw annotation
+#               center = (int(image_point[0]), int(image_point[1]))
+#               print('center', center)
+#               cv2.circle(annotated, center, 10, (0, 255, 0), 2)
+#               cv2.putText(
+#                annotated,
+#                f"LED {led_count + 1}",
+#                (center[0] + 5, center[1] - 5),
+#                cv2.FONT_HERSHEY_SIMPLEX,
+#                0.5,
+#                (0, 255, 0),
+#                1,
+#                cv2.LINE_AA,
+#               )
+#               led_count += 1
+#               cv2.imshow("Annotated", annotated)
+#               if cv2.waitKey(1) & 0xFF == ord("q"):
+#                  cv2.destroyAllWindows()
+#                  break
             
-               print(f"Detected LEDs: {led_count}")
-
-			   # Show images
-#               cv2.imshow("Thresholded", thresh)
+            print(f"Detected LEDs: {led_count}")
 
 
             if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
@@ -327,9 +325,9 @@ def detect_leds(
                 cam_to_w_xyz = p = pose_dict["camera_position"]
                 body_to_w_quat = q = pose_dict["camera_orientation"]
 
-#                if ((time.time() - start_time >= 5) and not global_tf_set):
-#                    set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
-#                    global_tf_set = True 
+                if ((time.time() - start_time >= 5) and not global_tf_set):
+                    set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
+                    global_tf_set = True 
             
                 if CONNECT_MAVLINK:        
                     msg = mavutil.mavlink.MAVLink_odometry_message(
@@ -367,7 +365,7 @@ def detect_leds(
                         mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
                     )
                     m.mav.send(msg)
-                    time.sleep(1/30.0)
+                    time.sleep(1/100.0)
 
 
                     
