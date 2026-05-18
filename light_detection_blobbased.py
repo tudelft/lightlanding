@@ -332,39 +332,32 @@ def detect_leds(
                 if CONNECT_MAVLINK:        
                     msg = mavutil.mavlink.MAVLink_odometry_message(
                         timestamp,
-                        mavutil.mavlink.MAV_FRAME_VISION_NED,
-                        # mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
+                        mavutil.mavlink.MAV_FRAME_LOCAL_NED,
                         mavutil.mavlink.MAV_FRAME_BODY_FRD,
                         *p,
                         [q[3], q[0], q[1], q[2]],  # w, x, y, z
 
-                        # velocity (
+                        # Velocities are unavialable / Ignored
                         float('nan'), float('nan'), float('nan'),
                         float('nan'), float('nan'), float('nan'),
 
-                        # pose covariance (6x6 upper triangle = 21 values)
+                        # Corrected 21-value Upper-Triangle Pose Covariance
                         [
-                            0.02, 0, 0, 0, 0, 0,
-                            0.02, 0, 0, 0, 0,
-                            0.03, 0, 0, 0,
-                            0.02, 0, 0,
-                            0.02, 0,
-                            0.03
+                            0.02, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                0.02, 0.0, 0.0, 0.0, 0.0,
+                                        0.02, 0.0, 0.0, 0.0,
+                                            0.02, 0.0, 0.0,
+                                                    0.02, 0.0,
+                                                        0.02
                         ],
 
-                        # velocity covariance
-                        [
-                            0.02, 0, 0, 0, 0, 0,
-                            0.02, 0, 0, 0, 0,
-                            0.04, 0, 0, 0,
-                            0.02, 0, 0,
-                            0.02, 0,
-                            0.04
-                        ],
+                        # Tell EKF velocity variance is invalid since velocities are NaN
+                        [-1.0] + [0.0]*20, 
 
                         100,  # quality
                         mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
                     )
+                    
                     m.mav.send(msg)
                     time.sleep(1/100.0)
 
