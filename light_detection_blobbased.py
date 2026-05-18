@@ -596,24 +596,44 @@ def order_l_shape_markers_old(circles):
     # Extract only (x, y) coordinates
     pts = np.array(circles)[:, :2].astype(np.float32)
     
-    # 1. Find the Corner
-    # The corner is the point that minimizes the sum of distances to all other points
-    # while maintaining the L-structure. More simply, it's the point where 
-    # the two furthest points in the set form a right-ish angle.
+    # Calculate distance matrix between all pairs of points
     dist_matrix = cdist(pts, pts)
     
-    # In an L-shape, the corner is the point that has two "ends" far away.
-    # We identify the corner by finding the point that is 'central' to the connectivity.
-    # For 8 points, the corner is the only point with two neighbors in an L-grid.
-    # A reliable way: The corner is the point that, when removed, leaves two 
-    # separate clusters (the arms).
+    # --- 1. Robust Corner Detection via 90-Degree Angle Analysis ---
+    best_corner_idx = -1
+    min_angle_diff = float('inf')
     
-    # Let's find the corner by looking for the point that has the smallest 
-    # maximum distance to any other point (the most "central" in the L-bend).
-    corner_idx = np.argmin(np.max(dist_matrix, axis=1))
+    for i in range(8):
+        # Find the 2 nearest neighbors to point i (index 0 is the point itself)
+        nearest_indices = np.argsort(dist_matrix[i])[1:3]
+        p1, p2 = pts[nearest_indices[0]], pts[nearest_indices[1]]
+        
+        # Build vectors from point i to these two neighbors
+        v1 = p1 - pts[i]
+        v2 = p2 - pts[i]
+        
+        # Calculate the angle between these two vectors
+        norm_v1 = np.linalg.norm(v1)
+        norm_v2 = np.linalg.norm(v2)
+        if norm_v1 == 0 or norm_v2 == 0:
+            continue
+            
+        unit_v1 = v1 / norm_v1
+        unit_v2 = v2 / norm_v2
+        
+        dot_product = np.clip(np.dot(unit_v1, unit_v2), -1.0, 1.0)
+        angle = np.arccos(dot_product)
+        
+        # We look for the point whose local neighbors form an angle closest to 90 deg (pi/2)
+        angle_diff = abs(angle - np.pi / 2)
+        if angle_diff < min_angle_diff:
+            min_angle_diff = angle_diff
+            best_corner_idx = i
+
+    corner_idx = best_corner_idx
     corner = pts[corner_idx]
     
-    # 2. Separate the arms
+    # --- 2. Separate the Arms ---
     # Remaining 7 points
     others_mask = np.arange(8) != corner_idx
     others = pts[others_mask]
@@ -622,29 +642,25 @@ def order_l_shape_markers_old(circles):
     # Calculate vectors from corner to all other points
     vectors = others - corner
     
-    # Use PCA or simple clustering on the angles to separate the two arms
-    angles = np.arctan2(vectors[:, 1], vectors[:, 0])
-    
-    # Since it's an L-shape, the angles will cluster into two groups ~90 degrees apart.
-    # We'll use the simplest heuristic: find the point furthest from the corner.
-    # That must be the end of the LONG arm.
+    # Find the point furthest from the corner. This MUST be the tip of the LONG arm.
     farthest_idx_in_others = np.argmax(np.linalg.norm(vectors, axis=1))
     long_arm_end_vec = vectors[farthest_idx_in_others]
     
-    # Points whose vectors are more aligned with the long_arm_end_vec belong to the long arm
-    cos_sim = np.dot(vectors, long_arm_end_vec) / (
-        np.linalg.norm(vectors, axis=1) * np.linalg.norm(long_arm_end_vec)
-    )
+    # Calculate alignment (cosine similarity) against the long arm vector
+    # Points on the long arm will have a similarity close to 1.0; short arm will be near 0.0
+    norms = np.linalg.norm(vectors, axis=1) * np.linalg.norm(long_arm_end_vec)
+    # Avoid division by zero safely
+    norms[norms == 0] = 1e-6
+    cos_sim = np.dot(vectors, long_arm_end_vec) / norms
     
-    # Threshold similarity to split the 7 points into 4 (long) and 3 (short)
-    # We sort by similarity and take the top 4 as the long arm
+    # The 4 points most aligned with the long arm end vector go to the long arm
     long_arm_mask = np.argsort(cos_sim)[-4:]
     short_arm_mask = np.argsort(cos_sim)[:3]
     
     long_arm_pts_indices = other_indices[long_arm_mask]
     short_arm_pts_indices = other_indices[short_arm_mask]
     
-    # 3. Sort points within arms by distance from corner
+    # --- 3. Sort points within arms by distance from corner ---
     long_arm_pts = pts[long_arm_pts_indices]
     dist_long = np.linalg.norm(long_arm_pts - corner, axis=1)
     sorted_long_indices = long_arm_pts_indices[np.argsort(dist_long)]
@@ -653,30 +669,30 @@ def order_l_shape_markers_old(circles):
     dist_short = np.linalg.norm(short_arm_pts - corner, axis=1)
     sorted_short_indices = short_arm_pts_indices[np.argsort(dist_short)]
     
-    # 4. Final Assembly
+    # --- 4. Final Assembly ---
     final_indices = [corner_idx] + list(sorted_long_indices) + list(sorted_short_indices)
     image_points = pts[final_indices]
-    print(image_points)
-        # 3D object points in cm
+    
+    # 3D object points in cm (or meters, as specified by your coordinates)
     object_points = np.array([
-        [0.0,  0.0,  0.0],   # corner
-        [0.125, 0.0,  0.0],
-        [0.250, 0.0,  0.0],
-        [0.375, 0.0,  0.0],
-        [0.500, 0.0,  0.0],   # long arm
+        [0.0,    0.0,    0.0],  # corner
+        [0.125,  0.0,    0.0],
+        [0.250,  0.0,    0.0],
+        [0.375,  0.0,    0.0],
+        [0.500,  0.0,    0.0],  # long arm
 
-        [0.0,  -0.125, 0.0],
-        [0.0,  -0.250, 0.0],
-        [0.0,  -0.375, 0.0],   # short arm
+        [0.0,   -0.125,  0.0],
+        [0.0,   -0.250,  0.0],
+        [0.0,   -0.375,  0.0],  # short arm
     ], dtype=np.float32)
 
     info = {
-        "corner_index": corner_idx,
-        "long_arm_indices": sorted_long_indices,
-        "short_arm_indices": sorted_short_indices,
+        "corner_index": int(corner_idx),
+        "long_arm_indices": sorted_long_indices.tolist(),
+        "short_arm_indices": sorted_short_indices.tolist(),
     }
 
-    return image_points, object_points, info
+    return image_points.astype(np.float32), object_points, info
 
 def detections_to_points_diffradiicircles(fitered_circles): # when the two arms have LEDs that have different radii, we can use that to help identify the corner and arm assignment. The corner is likely among the larger-radius LEDs, and the two arms can be separated by their radius groups. This can be more robust when the L-shape is viewed at an angle where the arms are foreshortened and angles are less reliable.
     """
