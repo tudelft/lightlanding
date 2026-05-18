@@ -332,7 +332,8 @@ def detect_leds(
                 if CONNECT_MAVLINK:        
                     msg = mavutil.mavlink.MAVLink_odometry_message(
                         timestamp,
-                        mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
+                        mavutil.mavlink.MAV_FRAME_VISION_NED,
+                        # mavutil.mavlink.MAV_FRAME_LOCAL_FRD,
                         mavutil.mavlink.MAV_FRAME_BODY_FRD,
                         *p,
                         [q[3], q[0], q[1], q[2]],  # w, x, y, z
