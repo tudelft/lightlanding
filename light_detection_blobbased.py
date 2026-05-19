@@ -343,12 +343,12 @@ def detect_leds(
 
                         # Corrected 21-value Upper-Triangle Pose Covariance
                         [
-                            0.02, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                0.02, 0.0, 0.0, 0.0, 0.0,
-                                        0.02, 0.0, 0.0, 0.0,
-                                            0.02, 0.0, 0.0,
-                                                    0.02, 0.0,
-                                                        0.02
+                            0.005, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                0.005, 0.0, 0.0, 0.0, 0.0,
+                                        0.005, 0.0, 0.0, 0.0,
+                                            0.005, 0.0, 0.0,
+                                                    0.005, 0.0,
+                                                        0.005
                         ],
 
                         # Tell EKF velocity variance is invalid since velocities are NaN
@@ -357,10 +357,8 @@ def detect_leds(
                         100,  # quality
                         mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
                     )
-                    
+                    print('EKF2EV_DELAY microseconds', time.time()*1e6 - timestamp)
                     m.mav.send(msg)
-                    time.sleep(1/100.0)
-
 
                     
     # finally:
