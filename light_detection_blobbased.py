@@ -10,8 +10,7 @@ from scipy.spatial.distance import cdist
 os.environ["MAVLINK20"] = "1"
 os.environ["MAVLINK_DIALECT"] = "common"
 from pymavlink import mavutil
-
-# =========================
+import threading# =========================
 # Input source configuration
 # =========================
 USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
@@ -28,6 +27,70 @@ camera_matrix = np.array([
 
 dist_coeffs = np.array([-0.1527729,   0.09656486, -0.17091717,  0.10037008], dtype=np.float32)
 
+
+
+class MAVLinkClockSynchronizer:
+    def __init__(self, mavlink_connection):
+        self.master = mavlink_connection
+        self.autopilot_time_offset_us = None
+        self._lock = threading.Lock()
+        self._running = True
+        
+        # Start a background thread to constantly monitor incoming MAVLink messages
+        self._thread = threading.Thread(target=self._update_loop, daemon=True)
+        self._thread.start()
+
+    def _update_loop(self):
+        """Background loop that listens for SYSTEM_TIME messages to calculate clock drift."""
+        while self._running:
+            try:
+                # Non-blocking read for any incoming MAVLink message
+                msg = self.master.recv_match(blocking=False)
+                if msg is None:
+                    time.sleep(0.01) # Yield CPU if no message is waiting
+                    continue
+
+                if msg.get_type() == 'SYSTEM_TIME':
+                    self.handle_system_time(msg)
+                    
+            except Exception as e:
+                print(f"Error in MAVLink listener thread: {e}")
+                time.sleep(1)
+
+    def handle_system_time(self, msg):
+        """
+        Calculates the delta between the Companion Computer's system clock 
+        and the Autopilot's internal microsecond uptime clock.
+        """
+        # Capture companion time immediately upon entering the function
+        companion_now_us = int(time.time() * 1e6)
+        
+        # time_boot_ms is the autopilot uptime clock in milliseconds
+        autopilot_boot_us = msg.time_boot_ms * 1000
+        
+        # Thread-safe update of the time offset
+        with self._lock:
+            self.autopilot_time_offset_us = autopilot_boot_us - companion_now_us
+
+    def get_autopilot_timestamp(self, image_capture_sys_time_us):
+        """
+        Converts a companion computer timestamp (taken during image acquisition)
+        into an autopilot-aligned timestamp for the ODOMETRY message.
+        """
+        with self._lock:
+            if self.autopilot_time_offset_us is not None:
+                # Map the exact moment the camera shutter fired to the autopilot's timeline
+                return image_capture_sys_time_us + self.autopilot_time_offset_us
+            else:
+                # Fallback if no SYSTEM_TIME message has been received yet
+                # Note: The EKF may reject messages using this fallback until sync happens.
+                return int(time.time() * 1e6)
+
+    def stop(self):
+        """Stops the background thread gracefully."""
+        self._running = False
+        self._thread.join()
+
 def detect_leds(
     min_area: int = 1,
     max_area: int = 40000,
@@ -37,6 +100,14 @@ def detect_leds(
     if CONNECT_MAVLINK:
         m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
         m.wait_heartbeat()
+
+        sync = MAVLinkClockSynchronizer(m)            
+        # Wait a moment to ensure we catch at least one SYSTEM_TIME message (sent at ~1Hz by default)
+        print("Waiting for clock synchronization...")
+        while sync.autopilot_time_offset_us is None:
+            time.sleep(0.1)
+        print(f"Clock synced! Current offset: {sync.autopilot_time_offset_us} microseconds")
+    
 
         # Example: Delft, NL
         LAT_DEG = 51.99042
@@ -181,10 +252,10 @@ def detect_leds(
                 print("End of video or failed to read frame.")
                 break
             else:
-                timestamp = int(time.time()*1e6)
+                image_capture_time_usec = int(time.time()*1e6)
         else:
+            image_capture_time_usec = int(time.time()*1e6)
             frame = picam2.capture_array()
-            timestamp = int(time.time()*1e6)
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
         # green = frame  # or frame[:, :, 1] if you want the green channel only
@@ -210,10 +281,19 @@ def detect_leds(
 #            green, map1, map2, interpolation=cv2.INTER_LINEAR  # MZ make sure to recompute the intrinsics if uncommenting this
 #        )
 
+
+        brightness_threshold = brightness_threshold
+
         blurred = cv2.GaussianBlur(frame, (21, 21), 0)
         annotated = blurred.copy()
         
-        blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
+        # threshold for top 20%
+        brightness_mask = np.percentile(blurred, 80)
+
+        # select pixels above threshold
+        top_pixels = blurred[blurred >= brightness_mask]
+
+        avg_top_20 = np.mean(top_pixels)
 
         # green_undistorted = cv2.cvtColor(green_undistorted, cv2.COLOR_BGR2GRAY)
 
@@ -325,13 +405,19 @@ def detect_leds(
                 cam_to_w_xyz = p = pose_dict["camera_position"]
                 body_to_w_quat = q = pose_dict["camera_orientation"]
 
-                if ((time.time() - start_time >= 5) and not global_tf_set):
+                if ((time.time() - image_capture_time_usec >= 1) and not global_tf_set):
                     set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
                     global_tf_set = True 
             
+                mavlink_timestamp = sync.get_autopilot_timestamp(image_capture_time_usec)
+                
+                # Calculate actual pipeline latency just for monitoring
+                pipeline_latency_ms = (int(time.time() * 1e6) - image_capture_time_usec) / 1000.0
+                print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
+                
                 if CONNECT_MAVLINK:        
                     msg = mavutil.mavlink.MAVLink_odometry_message(
-                        timestamp,
+                        mavlink_timestamp,
                         mavutil.mavlink.MAV_FRAME_LOCAL_NED,
                         mavutil.mavlink.MAV_FRAME_BODY_FRD,
                         *p,
@@ -357,8 +443,9 @@ def detect_leds(
                         100,  # quality
                         mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
                     )
-                    print('EKF2EV_DELAY microseconds', time.time()*1e6 - timestamp)
+                    
                     m.mav.send(msg)
+
 
                     
     # finally:
