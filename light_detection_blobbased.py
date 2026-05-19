@@ -254,8 +254,16 @@ def detect_leds(
             else:
                 image_capture_time_usec = int(time.time()*1e6)
         else:
-            image_capture_time_usec = int(time.time()*1e6)
-            frame = picam2.capture_array()
+            # 1. FLUSH THE BUFFER: Drop the oldest frames currently stuck in the queue
+            # Most USB/CSI camera drivers buffer a maximum of 4-5 frames.
+            for _ in range(4):
+                cap.grab() 
+                
+            image_capture_time_us = int(time.time() * 1e6)
+            # 3. DECODE THE FRESH FRAME
+            ret, frame = cap.read() 
+            if not ret:
+                continue
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
         # green = frame  # or frame[:, :, 1] if you want the green channel only
