@@ -285,8 +285,11 @@ def detect_leds(
         brightness_threshold = brightness_threshold
 
         blurred = cv2.GaussianBlur(frame, (21, 21), 0)
+        blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
+
         annotated = blurred.copy()
         
+
         # threshold for top 20%
         brightness_mask = np.percentile(blurred, 80)
 
@@ -295,7 +298,7 @@ def detect_leds(
 
         avg_top_20 = np.mean(top_pixels)
 
-        # green_undistorted = cv2.cvtColor(green_undistorted, cv2.COLOR_BGR2GRAY)
+        #green_undistorted = cv2.cvtColor(green_undistorted, cv2.COLOR_BGR2GRAY)
 
         # Threshold bright regions (likely LEDs)
         _, thresh = cv2.threshold(blurred, brightness_threshold, 255, cv2.THRESH_BINARY)
