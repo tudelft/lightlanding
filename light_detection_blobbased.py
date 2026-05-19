@@ -221,7 +221,9 @@ def detect_leds(
         from picamera2 import Picamera2
         picam2 = Picamera2()
         config = picam2.create_video_configuration(
-            main={"size": (1456, 1088), "format": "RGB888"}
+            main={"size": (1456, 1088), "format": "RGB888"},
+            buffer_count=2,
+            queue=False
         )
         picam2.configure(config)
         controls = {
@@ -229,6 +231,7 @@ def detect_leds(
         "AnalogueGain": 1.0}
         picam2.set_controls(controls)
         picam2.start()
+
 
 
 	# try:
@@ -254,16 +257,8 @@ def detect_leds(
             else:
                 image_capture_time_usec = int(time.time()*1e6)
         else:
-            # 1. FLUSH THE BUFFER: Drop the oldest frames currently stuck in the queue
-            # Most USB/CSI camera drivers buffer a maximum of 4-5 frames.
-            for _ in range(4):
-                cap.grab() 
-                
-            image_capture_time_us = int(time.time() * 1e6)
-            # 3. DECODE THE FRESH FRAME
-            ret, frame = cap.read() 
-            if not ret:
-                continue
+            image_capture_time_usec = int(time.time()*1e6)
+            frame = picam2.capture_array()
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
         # green = frame  # or frame[:, :, 1] if you want the green channel only
