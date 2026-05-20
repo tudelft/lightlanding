@@ -19,15 +19,13 @@ VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE
 
 # intrinsics and distortion parameters
 
-camera_matrix = np.array([
- [975.77317088,   0.,         716.37283008],
- [  0.,         974.8115937,  522.97850855],
- [  0.,           0.,           1.,        ]]
+camera_matrix = np.array(
+ [[969.51068735,   0.,         714.96262304],
+ [  0.,         970.38701488, 512.82273437],
+ [  0.,           0.,           1.        ]]
 )
 
-dist_coeffs = np.array([-0.1527729,   0.09656486, -0.17091717,  0.10037008], dtype=np.float32)
-
-
+dist_coeffs = np.array([-0.10954677, -0.05386312,  0.0828407,  -0.04414232])
 
 class MAVLinkClockSynchronizer:
     def __init__(self, mavlink_connection):
@@ -246,6 +244,7 @@ def detect_leds(
 #    cv2.resizeWindow('Annotated', 700, 700) 
 		
     while True:
+        time.sleep(1)
 		# -------------------------
         # Read frame
         # -------------------------
@@ -617,7 +616,7 @@ def order_l_shape_markers(circles):
             best_corner_idx = i
 
     corner = pts[best_corner_idx]
-    
+    print('corner', corner)
     # --- 2. Separate Arms ---
     other_indices = [i for i in range(8) if i != best_corner_idx]
     others = pts[other_indices]
@@ -1072,19 +1071,19 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         return {"success": False}
 
     # Optional refinement
-    success, rvec, tvec = cv2.solvePnP(
-        object_points,
-        image_points,
-        K,
-        dist_coeffs,
-        rvec=rvec,
-        tvec=tvec,
-        useExtrinsicGuess=True,
-        flags=cv2.SOLVEPNP_ITERATIVE
-    )
+    #success, rvec, tvec = cv2.solvePnP(
+    #    object_points,
+    #    image_points,
+    #    K,
+    #    dist_coeffs,
+    #    rvec=rvec,
+    #    tvec=tvec,
+    #    useExtrinsicGuess=True,
+    #    flags=cv2.SOLVEPNP_ITERATIVE
+    #)
 
     R_wld_to_cam, _ = cv2.Rodrigues(rvec)
-
+    #print('tvec', tvec)
     T_wld_to_cam = np.eye(4)
     T_wld_to_cam[:3, :3] = R_wld_to_cam
     T_wld_to_cam[:3, 3] = tvec.flatten()
