@@ -1040,10 +1040,12 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         Contains pose, reprojection error, and camera position.
     """
     object_points = np.ascontiguousarray(object_points, dtype=np.float64).reshape(-1, 3)
-    image_points = np.ascontiguousarray(image_points, dtype=np.float64).reshape(-1, 2)
 
+    image_points = np.ascontiguousarray(image_points, dtype=np.float64).reshape(-1, 2)
     K = np.asarray(K, dtype=np.float64)
 
+    image_points = cv2.fisheye.undistortPoints(image_points, K, dist_coeffs)
+    
     if object_points.shape[0] < 4:
         raise ValueError("Need at least 4 points")
     if image_points.shape[0] != object_points.shape[0]:
@@ -1053,17 +1055,18 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     success, rvec, tvec = cv2.solvePnP(
         object_points,
         image_points,
-        K,
-        dist_coeffs,
+        np.eye(3),
+        None,
         flags=cv2.SOLVEPNP_IPPE
     )
+
     if not success:
         # Fallback to iterative
         success, rvec, tvec = cv2.solvePnP(
             object_points,
             image_points,
-            K,
-            dist_coeffs,
+            np.eye(3),
+            None,
             flags=cv2.SOLVEPNP_ITERATIVE
         )
 
