@@ -240,8 +240,8 @@ def detect_leds(
 #    cv2.resizeWindow('Thresholded', 700, 700) 
 
 #    cv2.waitKey(1)
-#    cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
-#    cv2.resizeWindow('Annotated', 700, 700) 
+    cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Annotated', 700, 700) 
 		
     while True:
         time.sleep(1)
@@ -287,9 +287,9 @@ def detect_leds(
         brightness_threshold = brightness_threshold
 
         blurred = cv2.GaussianBlur(frame, (21, 21), 0)
-        blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
 
         annotated = blurred.copy()
+        blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
         
 
         # threshold for top 20%
@@ -378,26 +378,26 @@ def detect_leds(
             # print("2D-3D correspondences:", len(image_points), len(object_points))
             
             led_count = 0
-#            for image_point in image_points:    
+            for image_point in image_points:    
 #			   # Draw annotation
-#               center = (int(image_point[0]), int(image_point[1]))
-#               print('center', center)
-#               cv2.circle(annotated, center, 10, (0, 255, 0), 2)
-#               cv2.putText(
-#                annotated,
-#                f"LED {led_count + 1}",
-#                (center[0] + 5, center[1] - 5),
-#                cv2.FONT_HERSHEY_SIMPLEX,
-#                0.5,
-#                (0, 255, 0),
-#                1,
-#                cv2.LINE_AA,
-#               )
-#               led_count += 1
-#               cv2.imshow("Annotated", annotated)
-#               if cv2.waitKey(1) & 0xFF == ord("q"):
-#                  cv2.destroyAllWindows()
-#                  break
+               center = (int(image_point[0]), int(image_point[1]))
+               print('center', center)
+               cv2.circle(annotated, center, 10, (0, 255, 0), 2)
+               cv2.putText(
+                annotated,
+                f"LED {led_count + 1}",
+                (center[0] + 5, center[1] - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 0),
+                1,
+                cv2.LINE_AA,
+               )
+               led_count += 1
+               cv2.imshow("Annotated", annotated)
+               if cv2.waitKey(1) & 0xFF == ord("q"):
+                  cv2.destroyAllWindows()
+                  break
             
             print(f"Detected LEDs: {led_count}")
 
@@ -1041,7 +1041,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     """
     object_points = np.ascontiguousarray(object_points, dtype=np.float64).reshape(-1, 3)
 
-    image_points = np.ascontiguousarray(image_points, dtype=np.float64).reshape(-1, 2)
+    image_points = np.ascontiguousarray(image_points, dtype=np.float64).reshape(-1, 1, 2)
     K = np.asarray(K, dtype=np.float64)
 
     image_points = cv2.fisheye.undistortPoints(image_points, K, dist_coeffs)
@@ -1099,7 +1099,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     # cam_orient_quat = R.from_matrix(R_cam_to_w).as_quat()  # (x, y, z, w)
 
     err, projected = reprojection_error(
-        object_points, image_points, rvec, tvec, K, dist_coeffs
+        object_points, image_points, rvec, tvec, np.eye(3), None
     )
     # cam_pos = camera_position_from_pose(R_mat, tvec)
 
