@@ -14,11 +14,25 @@ import threading# =========================
 # Input source configuration
 # =========================
 USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
-CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
+CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
+
+markertype = 'Lshape'  # 'Lshape' or 'aruco'
+
+# L-shape marker setup
+radius_tol=0.5 
+line_tol=6.0
+min_group_size=4 
+cross_ratio_tol=0.025
+
+# ArUco setup
+marker_size = 0.075   # meters
+target_id = 13
+aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+detector_params = cv2.aruco.DetectorParameters()
+detector = cv2.aruco.ArucoDetector(aruco_dict, detector_params)
 
 # intrinsics and distortion parameters
-
 camera_matrix = np.array(
  [[969.51068735,   0.,         714.96262304],
  [  0.,         970.38701488, 512.82273437],
@@ -89,7 +103,7 @@ class MAVLinkClockSynchronizer:
         self._running = False
         self._thread.join()
 
-def detect_leds(
+def detect_fiducials(
     min_area: int = 1,
     max_area: int = 40000,
     brightness_threshold: int = 80,
@@ -260,6 +274,8 @@ def detect_leds(
             frame = picam2.capture_array()
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
+        camera_matrix = rotate_intrinsics_180(camera_matrix, 1456, 1088)
+
         # green = frame  # or frame[:, :, 1] if you want the green channel only
 
         # -------------------------
@@ -275,184 +291,232 @@ def detect_leds(
             cv2.CV_16SC2,
         )
 
-#        image_undistorted = cv2.remap(
-#            frame, map1, map2, interpolation=cv2.INTER_LINEAR  # MZ make sure to recompute the intrinsics if uncommenting this
-#        )
+        image_undistorted = cv2.remap(
+            frame, map1, map2, interpolation=cv2.INTER_LINEAR)
 
 #        green_undistorted = cv2.remap(
-#            green, map1, map2, interpolation=cv2.INTER_LINEAR  # MZ make sure to recompute the intrinsics if uncommenting this
-#        )
+#            green, map1, map2, interpolation=cv2.INTER_LINEAR  )
 
+        if (markertype == 'Lshape'):
+            blurred = cv2.GaussianBlur(image_undistorted, (21, 21), 0)
 
-        brightness_threshold = brightness_threshold
-
-        blurred = cv2.GaussianBlur(frame, (21, 21), 0)
-
-        annotated = blurred.copy()
-        blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
-        
-
-        # threshold for top 20%
-        brightness_mask = np.percentile(blurred, 80)
-
-        # select pixels above threshold
-        top_pixels = blurred[blurred >= brightness_mask]
-
-        avg_top_20 = np.mean(top_pixels)
-
-        #green_undistorted = cv2.cvtColor(green_undistorted, cv2.COLOR_BGR2GRAY)
-
-        # Threshold bright regions (likely LEDs)
-        _, thresh = cv2.threshold(blurred, brightness_threshold, 255, cv2.THRESH_BINARY)
-
-        # Clean up small noise
-        kernel = np.ones((3, 3), np.uint8)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_DILATE, kernel)
-
-        # Find contours of bright blobs
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        circles = np.empty((0, 3), dtype=np.float32) 
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-
-            # Filter by size
-            if area < min_area or area > max_area:
-                continue
-
-            # Find enclosing circle
-            (x, y), radius = cv2.minEnclosingCircle(cnt)
-
-            # # Skip tiny detections
-            # if radius < 1:
-            #     continue
-
-            center = (int(x), int(y))
-            # radius = int(radius)
-
-            circles = np.append(circles, [[x, y, radius]], axis=0)
-
-        print('total circles', len(circles))
-        # deterministic order
-        order = np.lexsort((circles[:, 1], circles[:, 0]))
-        circles = circles[order]
-        
-        # fitered_circles = circles
-        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol=0.5, line_tol=10.0, min_group_size=4, cross_ratio_tol=0.025) #cr: 0.015
-        print('filtered circles', len(fitered_circles))
-
-#        led_count = 0
-#        for circle in fitered_circles:    
-#            # Draw annotation
-#            center = (int(circle[0]), int(circle[1]))
-#            radius = int(circle[2])
-#            cv2.circle(annotated, center, radius + 1, (0, 255, 0), 2)
-#            cv2.putText(
-#                annotated,
-#                f"LED {led_count + 1}",
-#                (center[0] + 5, center[1] - 5),
-#                cv2.FONT_HERSHEY_SIMPLEX,
-#                0.5,
-#                (0, 255, 0),
-#                1,
-#                cv2.LINE_AA,
-#            )
-
-#           led_count += 1
-
-        # print(f"Detected LEDs: {led_count}")
-
-        # Show images
-#        cv2.imshow("Thresholded", thresh)
-#        cv2.imshow("Annotated", annotated)
-
-#        if cv2.waitKey(1) & 0xFF == ord("q"):
-#            cv2.destroyAllWindows()
-#            break
-
-        # print(len(fitered_circles), "circles after line/radius filtering")
-        if (len(fitered_circles) == 8):
-            # print("Attempting pose estimation with", len(fitered_circles), "circles...")
-            image_points, object_points, info = order_l_shape_markers(fitered_circles)
-            # print("2D-3D correspondences:", len(image_points), len(object_points))
+            annotated = blurred.copy()
+            blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
             
-            led_count = 0
-            for image_point in image_points:    
-#			   # Draw annotation
-               center = (int(image_point[0]), int(image_point[1]))
-               print('center', center)
-               cv2.circle(annotated, center, 10, (0, 255, 0), 2)
-               cv2.putText(
-                annotated,
-                f"LED {led_count + 1}",
-                (center[0] + 5, center[1] - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 0),
-                1,
-                cv2.LINE_AA,
-               )
-               led_count += 1
-               cv2.imshow("Annotated", annotated)
-               if cv2.waitKey(1) & 0xFF == ord("q"):
-                  cv2.destroyAllWindows()
-                  break
+
+            # threshold for top 10%
+            brightness_mask = np.percentile(blurred, 90)
+
+            # select pixels above threshold
+            top_pixels = blurred[blurred >= brightness_mask]
+
+            avg_top_10_intensities = np.mean(top_pixels)
+            # brightness_threshold = avg_top_10_intensities - 10
+
+
+            #green_undistorted = cv2.cvtColor(green_undistorted, cv2.COLOR_BGR2GRAY)
+
+            # Threshold bright regions (likely LEDs)
+            _, thresh = cv2.threshold(blurred, brightness_threshold, 255, cv2.THRESH_BINARY)
+
+            # Clean up small noise
+            kernel = np.ones((3, 3), np.uint8)
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_DILATE, kernel)
+
+            # Find contours of bright blobs
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            circles = np.empty((0, 3), dtype=np.float32) 
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+
+                # Filter by size
+                if area < min_area or area > max_area:
+                    continue
+
+                # Find enclosing circle
+                (x, y), radius = cv2.minEnclosingCircle(cnt)
+
+                # # Skip tiny detections
+                # if radius < 1:
+                #     continue
+
+                center = (int(x), int(y))
+                # radius = int(radius)
+
+                circles = np.append(circles, [[x, y, radius]], axis=0)
+
+            print('total circles', len(circles))
+            # deterministic order
+            order = np.lexsort((circles[:, 1], circles[:, 0]))
+            circles = circles[order]
             
-            print(f"Detected LEDs: {led_count}")
+            # fitered_circles = circles
+            fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol, line_tol, min_group_size, cross_ratio_tol) #cr: 0.015
+            print('filtered circles', len(fitered_circles))
 
+    #        led_count = 0
+    #        for circle in fitered_circles:    
+    #            # Draw annotation
+    #            center = (int(circle[0]), int(circle[1]))
+    #            radius = int(circle[2])
+    #            cv2.circle(annotated, center, radius + 1, (0, 255, 0), 2)
+    #            cv2.putText(
+    #                annotated,
+    #                f"LED {led_count + 1}",
+    #                (center[0] + 5, center[1] - 5),
+    #                cv2.FONT_HERSHEY_SIMPLEX,
+    #                0.5,
+    #                (0, 255, 0),
+    #                1,
+    #                cv2.LINE_AA,
+    #            )
 
-            if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
-                pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
-                # print('Reprojection error:', pose_dict["reprojection_error"])
-                print('Reprojection error:', pose_dict["reprojection_error"])
-                print("Estimated pose:", pose_dict["camera_position"][0], pose_dict["camera_position"][1], pose_dict["camera_position"][2]) if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]) else print("Pose estimation failed")
-                cam_to_w_xyz = p = pose_dict["camera_position"]
-                body_to_w_quat = q = pose_dict["camera_orientation"]
+    #           led_count += 1
 
-                if ((time.time() - image_capture_time_usec >= 1) and not global_tf_set):
-                    set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
-                    global_tf_set = True 
-            
-                mavlink_timestamp = sync.get_autopilot_timestamp(image_capture_time_usec)
+            # print(f"Detected LEDs: {led_count}")
+
+            # Show images
+    #        cv2.imshow("Thresholded", thresh)
+    #        cv2.imshow("Annotated", annotated)
+
+    #        if cv2.waitKey(1) & 0xFF == ord("q"):
+    #            cv2.destroyAllWindows()
+    #            break
+
+            # print(len(fitered_circles), "circles after line/radius filtering")
+            if (len(fitered_circles) == 8):
+                # print("Attempting pose estimation with", len(fitered_circles), "circles...")
+                image_points, object_points, info = order_l_shape_markers(fitered_circles)
+                # print("2D-3D correspondences:", len(image_points), len(object_points))
                 
-                # Calculate actual pipeline latency just for monitoring
-                pipeline_latency_ms = (int(time.time() * 1e6) - image_capture_time_usec) / 1000.0
-                print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
-                
-                if CONNECT_MAVLINK:        
-                    msg = mavutil.mavlink.MAVLink_odometry_message(
-                        mavlink_timestamp,
-                        mavutil.mavlink.MAV_FRAME_LOCAL_NED,
-                        mavutil.mavlink.MAV_FRAME_BODY_FRD,
-                        *p,
-                        [q[3], q[0], q[1], q[2]],  # w, x, y, z
-
-                        # Velocities are unavialable / Ignored
-                        float('nan'), float('nan'), float('nan'),
-                        float('nan'), float('nan'), float('nan'),
-
-                        # Corrected 21-value Upper-Triangle Pose Covariance
-                        [
-                            0.005, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                0.005, 0.0, 0.0, 0.0, 0.0,
-                                        0.005, 0.0, 0.0, 0.0,
-                                            0.005, 0.0, 0.0,
-                                                    0.005, 0.0,
-                                                        0.005
-                        ],
-
-                        # Tell EKF velocity variance is invalid since velocities are NaN
-                        [-1.0] + [0.0]*20, 
-
-                        100,  # quality
-                        mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
+                led_count = 0
+                for image_point in image_points:    
+    #			   # Draw annotation
+                    center = (int(image_point[0]), int(image_point[1]))
+                    print('center', center)
+                    cv2.circle(annotated, center, 10, (0, 255, 0), 2)
+                    cv2.putText(
+                        annotated,
+                        f"LED {led_count + 1}",
+                        (center[0] + 5, center[1] - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        1,
+                        cv2.LINE_AA,
                     )
-                    
-                    m.mav.send(msg)
+                    led_count += 1
+
+                cv2.imshow("Annotated", annotated)              
+                print(f"Detected LEDs: {led_count}")
 
 
-                    
+                if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
+                    pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
+                    # print('Reprojection error:', pose_dict["reprojection_error"])
+                    print('Reprojection error:', pose_dict["reprojection_error"])
+                    print("Estimated pose:", pose_dict["camera_position"][0], pose_dict["camera_position"][1], pose_dict["camera_position"][2]) if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]) else print("Pose estimation failed")
+                    cam_to_w_xyz = p = pose_dict["camera_position"]
+                    body_to_w_quat = q = pose_dict["camera_orientation"]
+
+                    if ((time.time() - image_capture_time_usec >= 1) and not global_tf_set):
+                        set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
+                        global_tf_set = True 
+
+            elif markertype == 'aruco':
+                corners, ids, _ = detector.detectMarkers(image_undistorted)
+                if ids is not None:
+                    ids = ids.flatten()
+                    cv2.aruco.drawDetectedMarkers(frame, corners, ids)
+
+                    for i, marker_id in enumerate(ids):
+                        if marker_id == target_id:
+                            rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(
+                                [corners[i]],
+                                marker_size,
+                                camera_matrix,
+                                dist_coeffs
+                            )
+
+                            rvec = rvec[0][0]
+                            tvec = tvec[0][0]
+
+                            cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvec, tvec, 0.05)
+
+                            x, y, z = tvec
+                            text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+                            print(text)
+
+                            cv2.putText(
+                                frame,
+                                text,
+                                (20, 40),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.8,
+                                (0, 255, 0),
+                                2
+                            )
+
+                R_wld_to_cam, _ = cv2.Rodrigues(rvec)
+                #print('tvec', tvec)
+                T_wld_to_cam = np.eye(4)
+                T_wld_to_cam[:3, :3] = R_wld_to_cam
+                T_wld_to_cam[:3, 3] = tvec.flatten()
+
+                # Invert transform
+                T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
+                T_drone_to_wld = T_cam_to_wld 
+                # T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
+
+                p = cam_pos = T_drone_to_wld[:3, 3]
+                q = cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
+                            
+                cv2.imshow("Original (Pose Estimation)", frame)
+                cv2.imshow("Undistorted Image", image_undistorted)
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                cv2.destroyAllWindows()
+                break  
+            
+            mavlink_timestamp = sync.get_autopilot_timestamp(image_capture_time_usec)
+            
+            # Calculate actual pipeline latency just for monitoring
+            pipeline_latency_ms = (int(time.time() * 1e6) - image_capture_time_usec) / 1000.0
+            print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
+            
+            if CONNECT_MAVLINK:        
+                msg = mavutil.mavlink.MAVLink_odometry_message(
+                    mavlink_timestamp,
+                    mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+                    mavutil.mavlink.MAV_FRAME_BODY_FRD,
+                    *p,
+                    [q[3], q[0], q[1], q[2]],  # w, x, y, z
+
+                    # Velocities are unavialable / Ignored
+                    float('nan'), float('nan'), float('nan'),
+                    float('nan'), float('nan'), float('nan'),
+
+                    # Corrected 21-value Upper-Triangle Pose Covariance
+                    [
+                        0.005, 0.0, 0.0, 0.0, 0.0, 0.0,
+                            0.005, 0.0, 0.0, 0.0, 0.0,
+                                    0.005, 0.0, 0.0, 0.0,
+                                        0.005, 0.0, 0.0,
+                                                0.005, 0.0,
+                                                    0.005
+                    ],
+
+                    # Tell EKF velocity variance is invalid since velocities are NaN
+                    [-1.0] + [0.0]*20, 
+
+                    100,  # quality
+                    mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
+                )
+                
+                m.mav.send(msg)
+
     # finally:
     #     # -------------------------
     #     # Cleanup
@@ -1044,8 +1108,6 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     image_points = np.ascontiguousarray(image_points, dtype=np.float64).reshape(-1, 1, 2)
     K = np.asarray(K, dtype=np.float64)
 
-    image_points = cv2.fisheye.undistortPoints(image_points, K, dist_coeffs)
-    
     if object_points.shape[0] < 4:
         raise ValueError("Need at least 4 points")
     if image_points.shape[0] != object_points.shape[0]:
@@ -1055,7 +1117,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     success, rvec, tvec = cv2.solvePnP(
         object_points,
         image_points,
-        np.eye(3),
+        K,
         None,
         flags=cv2.SOLVEPNP_IPPE
     )
@@ -1065,7 +1127,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         success, rvec, tvec = cv2.solvePnP(
             object_points,
             image_points,
-            np.eye(3),
+            K,
             None,
             flags=cv2.SOLVEPNP_ITERATIVE
         )
@@ -1099,7 +1161,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     # cam_orient_quat = R.from_matrix(R_cam_to_w).as_quat()  # (x, y, z, w)
 
     err, projected = reprojection_error(
-        object_points, image_points, rvec, tvec, np.eye(3), None
+        object_points, image_points, rvec, tvec, K, None
     )
     # cam_pos = camera_position_from_pose(R_mat, tvec)
 
@@ -1135,7 +1197,30 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         "points_camera_frame": pts_cam,
     }
 
+def rotate_intrinsics_180(K, image_width, image_height):
+    """
+    Update camera intrinsics after rotating image by 180 degrees.
+
+    Parameters
+    ----------
+    K : (3,3) ndarray
+        Original intrinsic matrix.
+    image_width : int
+    image_height : int
+
+    Returns
+    -------
+    K_rot : (3,3) ndarray
+        Updated intrinsic matrix.
+    """
+
+    K_rot = K.copy().astype(np.float64)
+
+    K_rot[0, 2] = image_width  - 1 - K[0, 2]   # cx
+    K_rot[1, 2] = image_height - 1 - K[1, 2]   # cy
+
+    return K_rot
 
 
 if __name__ == "__main__":
-    detect_leds()
+    detect_fiducials()
