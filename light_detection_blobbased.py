@@ -221,7 +221,13 @@ def detect_fiducials(
                 print("No HOME_POSITION received")
                 
             return None
-                
+
+    if (not global_tf_set and CONNECT_MAVLINK):
+        time.sleep(3)
+        set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
+        global_tf_set = True 
+        time.sleep(1)
+
     picam2 = None
     cap = None
 
@@ -425,45 +431,101 @@ def detect_fiducials(
                     cam_to_w_xyz = p = pose_dict["camera_position"]
                     body_to_w_quat = q = pose_dict["camera_orientation"]
 
-                    if ((time.time() - image_capture_time_usec >= 1) and not global_tf_set):
-                        set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
-                        global_tf_set = True 
+                    if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"] and CONNECT_MAVLINK):
+                        R_wld_to_cam, _ = cv2.Rodrigues(rvec)
+                        #print('tvec', tvec)
+                        T_wld_to_cam = np.eye(4)
+                        T_wld_to_cam[:3, :3] = R_wld_to_cam
+                        T_wld_to_cam[:3, 3] = tvec.flatten()
+
+                        # Invert transform
+                        T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
+                        T_drone_to_wld = T_cam_to_wld 
+                        # T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
+
+                        p = cam_pos = T_drone_to_wld[:3, 3]
+                        q = cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
+                                
+
+                        mavlink_timestamp = sync.get_autopilot_timestamp(image_capture_time_usec)
+                    
+                        # Calculate actual pipeline latency just for monitoring
+                        pipeline_latency_ms = (int(time.time() * 1e6) - image_capture_time_usec) / 1000.0
+                        print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
+                        
+                        msg = mavutil.mavlink.MAVLink_odometry_message(
+                            mavlink_timestamp,
+                            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+                            mavutil.mavlink.MAV_FRAME_BODY_FRD,
+                            *p,
+                            [q[3], q[0], q[1], q[2]],  # w, x, y, z
+
+                            # Velocities are unavialable / Ignored
+                            float('nan'), float('nan'), float('nan'),
+                            float('nan'), float('nan'), float('nan'),
+
+                            # Corrected 21-value Upper-Triangle Pose Covariance
+                            [
+                                0.005, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                    0.005, 0.0, 0.0, 0.0, 0.0,
+                                            0.005, 0.0, 0.0, 0.0,
+                                                0.005, 0.0, 0.0,
+                                                        0.005, 0.0,
+                                                            0.005
+                            ],
+
+                            # Tell EKF velocity variance is invalid since velocities are NaN
+                            [-1.0] + [0.0]*20, 
+
+                            100,  # quality
+                            mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
+                        )
+                        
+                        m.mav.send(msg)
+
+
 
         elif markertype == 'aruco':
-                print('Looking for Aruco')
-                corners, ids, _ = detector.detectMarkers(image_undistorted)
-                if ids is not None:
-                    ids = ids.flatten()
-                    cv2.aruco.drawDetectedMarkers(frame, corners, ids)
+            marker_found = False
+            print('Looking for Aruco')
+            corners, ids, _ = detector.detectMarkers(image_undistorted)
+            if ids is not None:
+                ids = ids.flatten()
+                cv2.aruco.drawDetectedMarkers(frame, corners, ids)
 
-                    for i, marker_id in enumerate(ids):
-                        if marker_id == target_id:
-                            rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(
-                                [corners[i]],
-                                marker_size,
-                                camera_matrix,
-                                dist_coeffs
-                            )
+                for i, marker_id in enumerate(ids):
+                    if marker_id == target_id:
+                        marker_found = True
+                        rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(
+                            [corners[i]],
+                            marker_size,
+                            camera_matrix,
+                            dist_coeffs
+                        )
 
-                            rvec = rvec[0][0]
-                            tvec = tvec[0][0]
+                        rvec = rvec[0][0]
+                        tvec = tvec[0][0]
 
-                            cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvec, tvec, 0.05)
+                        cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvec, tvec, 0.05)
 
-                            x, y, z = tvec
-                            text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
-                            print(text)
+                        x, y, z = tvec
+                        text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+                        print(text)
 
-                            cv2.putText(
-                                frame,
-                                text,
-                                (20, 40),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.8,
-                                (0, 255, 0),
-                                2
-                            )
+                        cv2.putText(
+                            frame,
+                            text,
+                            (20, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.8,
+                            (0, 255, 0),
+                            2
+                        )
 
+            cv2.imshow("Original (Pose Estimation)", frame)
+            cv2.imshow("Undistorted Image", image_undistorted)
+
+            if (marker_found and CONNECT_MAVLINK):    
                 R_wld_to_cam, _ = cv2.Rodrigues(rvec)
                 #print('tvec', tvec)
                 T_wld_to_cam = np.eye(4)
@@ -477,21 +539,14 @@ def detect_fiducials(
 
                 p = cam_pos = T_drone_to_wld[:3, 3]
                 q = cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
-                            
-                cv2.imshow("Original (Pose Estimation)", frame)
-                cv2.imshow("Undistorted Image", image_undistorted)
+                        
 
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                cv2.destroyAllWindows()
-                break  
+                mavlink_timestamp = sync.get_autopilot_timestamp(image_capture_time_usec)
             
-            mavlink_timestamp = sync.get_autopilot_timestamp(image_capture_time_usec)
-            
-            # Calculate actual pipeline latency just for monitoring
-            pipeline_latency_ms = (int(time.time() * 1e6) - image_capture_time_usec) / 1000.0
-            print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
-            
-            if CONNECT_MAVLINK:        
+                # Calculate actual pipeline latency just for monitoring
+                pipeline_latency_ms = (int(time.time() * 1e6) - image_capture_time_usec) / 1000.0
+                print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
+                
                 msg = mavutil.mavlink.MAVLink_odometry_message(
                     mavlink_timestamp,
                     mavutil.mavlink.MAV_FRAME_LOCAL_NED,
@@ -521,6 +576,10 @@ def detect_fiducials(
                 )
                 
                 m.mav.send(msg)
+
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            cv2.destroyAllWindows()
+            break  
 
     # finally:
     #     # -------------------------
