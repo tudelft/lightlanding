@@ -17,7 +17,7 @@ USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 
-markertype = 'aruco'  # 'Lshape' or 'aruco'
+markertype = 'Lshape'  # 'Lshape' or 'aruco'
 
 # L-shape marker setup
 radius_tol=0.5 
@@ -34,12 +34,10 @@ detector = cv2.aruco.ArucoDetector(aruco_dict, detector_params)
 
 # intrinsics and distortion parameters
 camera_matrix = np.array(
- [[969.51068735,   0.,         714.96262304],
- [  0.,         970.38701488, 512.82273437],
- [  0.,           0.,           1.        ]]
-)
-
-dist_coeffs = np.array([-0.10954677, -0.05386312,  0.0828407,  -0.04414232])
+ [[972.41752602,   0.,         719.86748972],
+ [  0.,         970.82689346, 520.66180438],
+ [  0.,           0.,           1.        ]])
+dist_coeffs = np.array([-0.13573729,  0.03353202, -0.0345132,   0.01030255])
 
 class MAVLinkClockSynchronizer:
     def __init__(self, mavlink_connection):
@@ -221,7 +219,8 @@ def detect_fiducials(
                 print("No HOME_POSITION received")
                 
             return None
-
+            
+    global_tf_set = False 
     if (not global_tf_set and CONNECT_MAVLINK):
         time.sleep(3)
         set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
@@ -256,7 +255,6 @@ def detect_fiducials(
 
 
 	# try:
-    global_tf_set = False 
     start_time = time.time()
 		
 #    cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
@@ -489,9 +487,10 @@ def detect_fiducials(
             marker_found = False
             print('Looking for Aruco')
             corners, ids, _ = detector.detectMarkers(image_undistorted)
+            print('Found ids', ids)
             if ids is not None:
                 ids = ids.flatten()
-                cv2.aruco.drawDetectedMarkers(frame, corners, ids)
+                cv2.aruco.drawDetectedMarkers(image_undistorted, corners, ids)
 
                 for i, marker_id in enumerate(ids):
                     if marker_id == target_id:
@@ -500,13 +499,13 @@ def detect_fiducials(
                             [corners[i]],
                             marker_size,
                             camera_matrix,
-                            dist_coeffs
+                            np.zeros(4)
                         )
 
                         rvec = rvec[0][0]
                         tvec = tvec[0][0]
 
-                        cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvec, tvec, 0.05)
+                        cv2.drawFrameAxes(image_undistorted, camera_matrix, np.zeros(4), rvec, tvec, 0.05)
 
                         x, y, z = tvec
                         text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
@@ -523,7 +522,9 @@ def detect_fiducials(
                         )
 
             cv2.imshow("Original (Pose Estimation)", frame)
+            cv2.waitKey(1)
             cv2.imshow("Undistorted Image", image_undistorted)
+            cv2.waitKey(1)
 
             if (marker_found and CONNECT_MAVLINK):    
                 R_wld_to_cam, _ = cv2.Rodrigues(rvec)
