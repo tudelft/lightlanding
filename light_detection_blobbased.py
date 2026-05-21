@@ -17,17 +17,17 @@ USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 
-markertype = 'Lshape'  # 'Lshape' or 'aruco'
+markertype = 'aruco'  # 'Lshape' or 'aruco'
 
 # L-shape marker setup
 radius_tol=0.5 
-line_tol=6.0
+line_tol=8.0
 min_group_size=4 
 cross_ratio_tol=0.025
 
 # ArUco setup
-marker_size = 0.075   # meters
-target_id = 13
+marker_size = 0.1   # meters
+target_id = 0
 aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 detector_params = cv2.aruco.DetectorParameters()
 detector = cv2.aruco.ArucoDetector(aruco_dict, detector_params)
