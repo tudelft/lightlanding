@@ -109,6 +109,9 @@ def detect_fiducials(
     brightness_threshold: int = 80,
 ) -> None:
 
+    global camera_matrix
+    global dist_coeffs
+	
     if CONNECT_MAVLINK:
         m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
         m.wait_heartbeat()
@@ -254,11 +257,13 @@ def detect_fiducials(
 #    cv2.resizeWindow('Thresholded', 700, 700) 
 
 #    cv2.waitKey(1)
-    cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('Annotated', 700, 700) 
+#    cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
+#    cv2.resizeWindow('Annotated', 700, 700) 
+
+    camera_matrix = rotate_intrinsics_180(camera_matrix, 1456, 1088) # because frame is rotated below
 		
     while True:
-        time.sleep(1)
+#        time.sleep(1)
 		# -------------------------
         # Read frame
         # -------------------------
@@ -274,7 +279,6 @@ def detect_fiducials(
             frame = picam2.capture_array()
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
-        camera_matrix = rotate_intrinsics_180(camera_matrix, 1456, 1088)
 
         # green = frame  # or frame[:, :, 1] if you want the green channel only
 
@@ -425,7 +429,8 @@ def detect_fiducials(
                         set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
                         global_tf_set = True 
 
-            elif markertype == 'aruco':
+        elif markertype == 'aruco':
+                print('Looking for Aruco')
                 corners, ids, _ = detector.detectMarkers(image_undistorted)
                 if ids is not None:
                     ids = ids.flatten()
