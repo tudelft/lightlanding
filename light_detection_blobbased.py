@@ -242,7 +242,7 @@ def detect_fiducials(
         picam2 = Picamera2()
         config = picam2.create_video_configuration(
             main={"size": (1456, 1088), "format": "RGB888"},
-            buffer_count=2,
+            buffer_count=1,
             queue=False
         )
         picam2.configure(config)
@@ -290,15 +290,23 @@ def detect_fiducials(
         # Undistort frame
         # -------------------------
         h, w = frame.shape[:2]
+        
+        new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
+        camera_matrix,
+        dist_coeffs,
+        (w, h),
+        np.eye(3),
+        balance=0.0)
+
         map1, map2 = cv2.fisheye.initUndistortRectifyMap(
             camera_matrix,
             dist_coeffs,
             np.eye(3),
-            camera_matrix,
+            new_K,
             (w, h),
             cv2.CV_16SC2,
         )
-
+        
         image_undistorted = cv2.remap(
             frame, map1, map2, interpolation=cv2.INTER_LINEAR)
 
@@ -306,6 +314,7 @@ def detect_fiducials(
 #            green, map1, map2, interpolation=cv2.INTER_LINEAR  )
 
         if (markertype == 'Lshape'):
+            print('Searching for LEDs...')
             blurred = cv2.GaussianBlur(image_undistorted, (21, 21), 0)
 
             annotated = blurred.copy()
@@ -355,14 +364,14 @@ def detect_fiducials(
 
                 circles = np.append(circles, [[x, y, radius]], axis=0)
 
-            print('total circles', len(circles))
+#            print('total circles', len(circles))
             # deterministic order
             order = np.lexsort((circles[:, 1], circles[:, 0]))
             circles = circles[order]
             
             # fitered_circles = circles
             fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol, line_tol, min_group_size, cross_ratio_tol) #cr: 0.015
-            print('filtered circles', len(fitered_circles))
+#            print('filtered circles', len(fitered_circles))
 
     #        led_count = 0
     #        for circle in fitered_circles:    
@@ -400,51 +409,47 @@ def detect_fiducials(
                 # print("2D-3D correspondences:", len(image_points), len(object_points))
                 
                 led_count = 0
-                for image_point in image_points:    
-    #			   # Draw annotation
-                    center = (int(image_point[0]), int(image_point[1]))
-                    print('center', center)
-                    cv2.circle(annotated, center, 10, (0, 255, 0), 2)
-                    cv2.putText(
-                        annotated,
-                        f"LED {led_count + 1}",
-                        (center[0] + 5, center[1] - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 255, 0),
-                        1,
-                        cv2.LINE_AA,
-                    )
-                    led_count += 1
+#                for image_point in image_points:    
+#    			   # Draw annotation
+#                    center = (int(image_point[0]), int(image_point[1]))
+#                    print('center', center)
+#                    #cv2.circle(annotated, center, 10, (0, 255, 0), 2)
+#                    cv2.putText(
+#                        annotated,
+#                        f"LED {led_count + 1}",
+#                        (center[0] + 5, center[1] - 5),
+#                        cv2.FONT_HERSHEY_SIMPLEX,
+#                        0.5,
+#                        (0, 255, 0),
+#                        1,
+#                        cv2.LINE_AA,
+#                    )
+#                    led_count += 1
 
-                cv2.imshow("Annotated", annotated)              
-                print(f"Detected LEDs: {led_count}")
+#               cv2.imshow("Annotated", annotated)              
+#                print(f"Detected LEDs: {led_count}")
 
 
                 if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
-                    pose_dict = estimate_planar_pose(object_points, image_points, camera_matrix, dist_coeffs=np.zeros((1, 4)))
+                    pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
                     # print('Reprojection error:', pose_dict["reprojection_error"])
                     print('Reprojection error:', pose_dict["reprojection_error"])
                     print("Estimated pose:", pose_dict["camera_position"][0], pose_dict["camera_position"][1], pose_dict["camera_position"][2]) if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]) else print("Pose estimation failed")
+
+#                    projected = pose_dict["projected_points"]
+#                    for p_img, p_proj in zip(image_points, projected):
+#                       cv2.circle(annotated, tuple(p_img.astype(int)), 10, (0,255,0), -1)
+#                       cv2.circle(annotated, tuple(p_proj.astype(int)), 10, (0,0,255), -1)
+#                       cv2.line(annotated,
+#                               tuple(p_img.astype(int)),
+#                               tuple(p_proj.astype(int)),
+#                               (255,0,0), 5)
+#                    cv2.imshow("Annotated", annotated)              
+
                     cam_to_w_xyz = p = pose_dict["camera_position"]
                     body_to_w_quat = q = pose_dict["camera_orientation"]
 
                     if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"] and CONNECT_MAVLINK):
-                        R_wld_to_cam, _ = cv2.Rodrigues(rvec)
-                        #print('tvec', tvec)
-                        T_wld_to_cam = np.eye(4)
-                        T_wld_to_cam[:3, :3] = R_wld_to_cam
-                        T_wld_to_cam[:3, 3] = tvec.flatten()
-
-                        # Invert transform
-                        T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
-                        T_drone_to_wld = T_cam_to_wld 
-                        # T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
-
-                        p = cam_pos = T_drone_to_wld[:3, 3]
-                        q = cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
-                                
-
                         mavlink_timestamp = sync.get_autopilot_timestamp(image_capture_time_usec)
                     
                         # Calculate actual pipeline latency just for monitoring
@@ -464,12 +469,12 @@ def detect_fiducials(
 
                             # Corrected 21-value Upper-Triangle Pose Covariance
                             [
-                                0.005, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                    0.005, 0.0, 0.0, 0.0, 0.0,
-                                            0.005, 0.0, 0.0, 0.0,
-                                                0.005, 0.0, 0.0,
-                                                        0.005, 0.0,
-                                                            0.005
+                                0.001, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                    0.001, 0.0, 0.0, 0.0, 0.0,
+                                            0.001, 0.0, 0.0, 0.0,
+                                                0.01, 0.0, 0.0,
+                                                        0.01, 0.0,
+                                                            0.01
                             ],
 
                             # Tell EKF velocity variance is invalid since velocities are NaN
@@ -490,7 +495,7 @@ def detect_fiducials(
             print('Found ids', ids)
             if ids is not None:
                 ids = ids.flatten()
-                cv2.aruco.drawDetectedMarkers(image_undistorted, corners, ids)
+#                cv2.aruco.drawDetectedMarkers(image_undistorted, corners, ids)
 
                 for i, marker_id in enumerate(ids):
                     if marker_id == target_id:
@@ -498,33 +503,33 @@ def detect_fiducials(
                         rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(
                             [corners[i]],
                             marker_size,
-                            camera_matrix,
+                            new_K,
                             np.zeros(4)
                         )
 
                         rvec = rvec[0][0]
                         tvec = tvec[0][0]
 
-                        cv2.drawFrameAxes(image_undistorted, camera_matrix, np.zeros(4), rvec, tvec, 0.05)
+#                        cv2.drawFrameAxes(image_undistorted, new_K, np.zeros(4), rvec, tvec, 0.05)
 
-                        x, y, z = tvec
-                        text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
-                        print(text)
+#                        x, y, z = tvec
+#                        text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+                        #print(text)
 
-                        cv2.putText(
-                            frame,
-                            text,
-                            (20, 40),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.8,
-                            (0, 255, 0),
-                            2
-                        )
+#                        cv2.putText(
+#                            frame,
+#                            text,
+#                            (20, 40),
+#                            cv2.FONT_HERSHEY_SIMPLEX,
+#                            0.8,
+#                            (0, 255, 0),
+#                            2
+#                        )
 
-            cv2.imshow("Original (Pose Estimation)", frame)
-            cv2.waitKey(1)
-            cv2.imshow("Undistorted Image", image_undistorted)
-            cv2.waitKey(1)
+#            cv2.imshow("Original)", frame)
+#            cv2.waitKey(1)
+#            cv2.imshow("Undistorted Image", image_undistorted)
+#            cv2.waitKey(1)
 
             if (marker_found and CONNECT_MAVLINK):    
                 R_wld_to_cam, _ = cv2.Rodrigues(rvec)
@@ -535,9 +540,16 @@ def detect_fiducials(
 
                 # Invert transform
                 T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
-                T_drone_to_wld = T_cam_to_wld 
-                # T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
+                T_cam_to_frd = np.array([
+                  [0,  1, 0, 0],
+                  [1,  0, 0, 0],
+                  [0, 0, -1, 0],
+                  [0,  0, 0, 1],
+                ], dtype=float)
 
+                #T_drone_to_wld = T_cam_to_wld 
+                T_drone_to_wld = T_cam_to_frd @ T_cam_to_wld
+                
                 p = cam_pos = T_drone_to_wld[:3, 3]
                 q = cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
                         
@@ -547,7 +559,7 @@ def detect_fiducials(
                 # Calculate actual pipeline latency just for monitoring
                 pipeline_latency_ms = (int(time.time() * 1e6) - image_capture_time_usec) / 1000.0
                 print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
-                
+                print("pose:", p)
                 msg = mavutil.mavlink.MAVLink_odometry_message(
                     mavlink_timestamp,
                     mavutil.mavlink.MAV_FRAME_LOCAL_NED,
@@ -578,9 +590,9 @@ def detect_fiducials(
                 
                 m.mav.send(msg)
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            cv2.destroyAllWindows()
-            break  
+#        if cv2.waitKey(1) & 0xFF == ord("q"):
+#            cv2.destroyAllWindows()
+#            break  
 
     # finally:
     #     # -------------------------
@@ -1170,7 +1182,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     """
     object_points = np.ascontiguousarray(object_points, dtype=np.float64).reshape(-1, 3)
 
-    image_points = np.ascontiguousarray(image_points, dtype=np.float64).reshape(-1, 1, 2)
+    image_points = np.ascontiguousarray(image_points, dtype=np.float64).reshape(-1, 2)
     K = np.asarray(K, dtype=np.float64)
 
     if object_points.shape[0] < 4:
@@ -1228,6 +1240,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     err, projected = reprojection_error(
         object_points, image_points, rvec, tvec, K, None
     )
+             
     # cam_pos = camera_position_from_pose(R_mat, tvec)
 
     # Check that all points are in front of the camera
