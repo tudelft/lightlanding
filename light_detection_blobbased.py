@@ -39,67 +39,18 @@ camera_matrix = np.array(
  [  0.,           0.,           1.        ]])
 dist_coeffs = np.array([-0.13573729,  0.03353202, -0.0345132,   0.01030255])
 
-class MAVLinkClockSynchronizer:
-    def __init__(self, mavlink_connection):
-        self.master = mavlink_connection
-        self.autopilot_time_offset_us = None
-        self._lock = threading.Lock()
-        self._running = True
-        
-        # Start a background thread to constantly monitor incoming MAVLink messages
-        self._thread = threading.Thread(target=self._update_loop, daemon=True)
-        self._thread.start()
+def get_fc_time_us(master):
+    while True:
+        msg = master.recv_match(
+            blocking=True,
+            timeout=1
+        )
 
-    def _update_loop(self):
-        """Background loop that listens for SYSTEM_TIME messages to calculate clock drift."""
-        while self._running:
-            try:
-                # Non-blocking read for any incoming MAVLink message
-                msg = self.master.recv_match(blocking=False)
-                if msg is None:
-                    time.sleep(0.01) # Yield CPU if no message is waiting
-                    continue
+        if msg is None:
+            continue
 
-                if msg.get_type() == 'SYSTEM_TIME':
-                    self.handle_system_time(msg)
-                    
-            except Exception as e:
-                print(f"Error in MAVLink listener thread: {e}")
-                time.sleep(1)
-
-    def handle_system_time(self, msg):
-        """
-        Calculates the delta between the Companion Computer's system clock 
-        and the Autopilot's internal microsecond uptime clock.
-        """
-        # Capture companion time immediately upon entering the function
-        companion_now_us = int(time.time() * 1e6)
-        
-        # time_boot_ms is the autopilot uptime clock in milliseconds
-        autopilot_boot_us = msg.time_boot_ms * 1000
-        
-        # Thread-safe update of the time offset
-        with self._lock:
-            self.autopilot_time_offset_us = autopilot_boot_us - companion_now_us
-
-    def get_autopilot_timestamp(self, image_capture_sys_time_us):
-        """
-        Converts a companion computer timestamp (taken during image acquisition)
-        into an autopilot-aligned timestamp for the ODOMETRY message.
-        """
-        with self._lock:
-            if self.autopilot_time_offset_us is not None:
-                # Map the exact moment the camera shutter fired to the autopilot's timeline
-                return image_capture_sys_time_us + self.autopilot_time_offset_us
-            else:
-                # Fallback if no SYSTEM_TIME message has been received yet
-                # Note: The EKF may reject messages using this fallback until sync happens.
-                return int(time.time() * 1e6)
-
-    def stop(self):
-        """Stops the background thread gracefully."""
-        self._running = False
-        self._thread.join()
+        if hasattr(msg, "time_boot_ms"):
+            return msg.time_boot_ms * 1000
 
 def detect_fiducials(
     min_area: int = 1,
@@ -112,15 +63,20 @@ def detect_fiducials(
 	
     if CONNECT_MAVLINK:
         m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
+        
+        print("Waiting heartbeat...")
         m.wait_heartbeat()
-
-        sync = MAVLinkClockSynchronizer(m)            
-        # Wait a moment to ensure we catch at least one SYSTEM_TIME message (sent at ~1Hz by default)
-        print("Waiting for clock synchronization...")
-        while sync.autopilot_time_offset_us is None:
-            time.sleep(0.1)
-        print(f"Clock synced! Current offset: {sync.autopilot_time_offset_us} microseconds")
+        print("Heartbeat received")
     
+        print("Waiting for FC boot time...")
+        fc_time_us = get_fc_time_us(m)
+        print(f"FC time received: {fc_time_us}")
+
+        # Estimate offset between companion monotonic clock
+        # and FC boot clock
+        companion_monotonic_us = int(time.monotonic() * 1e6)
+        offset_us = fc_time_us - companion_monotonic_us
+        print(f"Offset: {offset_us}")
 
         # Example: Delft, NL
         LAT_DEG = 51.99042
@@ -272,14 +228,19 @@ def detect_fiducials(
         # Read frame
         # -------------------------
         if USE_VIDEO_FILE:
+            image_capture_time_usec = int(time.monotonic() * 1e6)
+            mavlink_timestamp = image_capture_time_usec + offset_us
+            print(mavlink_timestamp)
             ret, frame = cap.read()
             if not ret:
                 print("End of video or failed to read frame.")
                 break
-            else:
-                image_capture_time_usec = int(time.time()*1e6)
+
         else:
-            image_capture_time_usec = int(time.time()*1e6)
+            # Use monotonic clock, NOT time.time()
+            image_capture_time_usec = int(time.monotonic() * 1e6)
+            mavlink_timestamp = image_capture_time_usec + offset_us
+            print(mavlink_timestamp)
             frame = picam2.capture_array()
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
@@ -450,8 +411,6 @@ def detect_fiducials(
                     body_to_w_quat = q = pose_dict["camera_orientation"]
 
                     if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"] and CONNECT_MAVLINK):
-                        mavlink_timestamp = sync.get_autopilot_timestamp(image_capture_time_usec)
-                    
                         # Calculate actual pipeline latency just for monitoring
                         pipeline_latency_ms = (int(time.time() * 1e6) - image_capture_time_usec) / 1000.0
                         print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
@@ -469,9 +428,9 @@ def detect_fiducials(
 
                             # Corrected 21-value Upper-Triangle Pose Covariance
                             [
-                                0.001, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                    0.001, 0.0, 0.0, 0.0, 0.0,
-                                            0.001, 0.0, 0.0, 0.0,
+                                0.000025, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                    0.000025, 0.0, 0.0, 0.0, 0.0,
+                                            0.000025, 0.0, 0.0, 0.0,
                                                 0.01, 0.0, 0.0,
                                                         0.01, 0.0,
                                                             0.01
