@@ -18,7 +18,7 @@ VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-
+show_visualization = True
 # L-shape marker setup
 radius_tol=0.5 
 line_tol=8.0
@@ -217,8 +217,9 @@ def detect_fiducials(
 #    cv2.resizeWindow('Thresholded', 700, 700) 
 
 #    cv2.waitKey(1)
-#    cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
-#    cv2.resizeWindow('Annotated', 700, 700) 
+    if (show_visualization):
+       cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
+       cv2.resizeWindow('Annotated', 700, 700) 
 
     camera_matrix = rotate_intrinsics_180(camera_matrix, 1456, 1088) # because frame is rotated below
 		
@@ -230,7 +231,6 @@ def detect_fiducials(
         if USE_VIDEO_FILE:
             image_capture_time_usec = int(time.monotonic() * 1e6)
             mavlink_timestamp = image_capture_time_usec + offset_us
-            print(mavlink_timestamp)
             ret, frame = cap.read()
             if not ret:
                 print("End of video or failed to read frame.")
@@ -240,7 +240,6 @@ def detect_fiducials(
             # Use monotonic clock, NOT time.time()
             image_capture_time_usec = int(time.monotonic() * 1e6)
             mavlink_timestamp = image_capture_time_usec + offset_us
-            print(mavlink_timestamp)
             frame = picam2.capture_array()
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
@@ -281,7 +280,6 @@ def detect_fiducials(
             annotated = blurred.copy()
             blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
             
-
             # threshold for top 10%
             brightness_mask = np.percentile(blurred, 90)
 
@@ -370,24 +368,26 @@ def detect_fiducials(
                 # print("2D-3D correspondences:", len(image_points), len(object_points))
                 
                 led_count = 0
-#                for image_point in image_points:    
-#    			   # Draw annotation
-#                    center = (int(image_point[0]), int(image_point[1]))
-#                    print('center', center)
-#                    #cv2.circle(annotated, center, 10, (0, 255, 0), 2)
-#                    cv2.putText(
-#                        annotated,
-#                        f"LED {led_count + 1}",
-#                        (center[0] + 5, center[1] - 5),
-#                        cv2.FONT_HERSHEY_SIMPLEX,
-#                        0.5,
-#                        (0, 255, 0),
-#                        1,
-#                        cv2.LINE_AA,
-#                    )
+                for image_point in image_points:    
+    			   # Draw annotation
+                    center = (int(image_point[0]), int(image_point[1]))
+                    #print('center', center)
+                    if (show_visualization):
+
+                       cv2.circle(annotated, center, 10, (0, 255, 0), 2)
+                       cv2.putText(
+                        annotated,
+                        f"LED {led_count + 1}",
+                        (center[0] + 5, center[1] - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        1,
+                        cv2.LINE_AA,
+                       )
 #                    led_count += 1
 
-#               cv2.imshow("Annotated", annotated)              
+#                cv2.imshow("Annotated", annotated)              
 #                print(f"Detected LEDs: {led_count}")
 
 
@@ -395,24 +395,42 @@ def detect_fiducials(
                     pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
                     # print('Reprojection error:', pose_dict["reprojection_error"])
                     print('Reprojection error:', pose_dict["reprojection_error"])
-                    print("Estimated pose:", pose_dict["camera_position"][0], pose_dict["camera_position"][1], pose_dict["camera_position"][2]) if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]) else print("Pose estimation failed")
+                    x = pose_dict["camera_position"][0]
+                    y = pose_dict["camera_position"][1]
+                    z = pose_dict["camera_position"][2]
+                    print("Estimated pose:", x, y, z) if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]) else print("Pose estimation failed")
 
-#                    projected = pose_dict["projected_points"]
-#                    for p_img, p_proj in zip(image_points, projected):
-#                       cv2.circle(annotated, tuple(p_img.astype(int)), 10, (0,255,0), -1)
-#                       cv2.circle(annotated, tuple(p_proj.astype(int)), 10, (0,0,255), -1)
-#                       cv2.line(annotated,
-#                               tuple(p_img.astype(int)),
-#                               tuple(p_proj.astype(int)),
-#                               (255,0,0), 5)
-#                    cv2.imshow("Annotated", annotated)              
+                    text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+                    if (show_visualization):
+
+                       cv2.putText(
+                       annotated,
+                       text,
+                       (20, 40),
+                       cv2.FONT_HERSHEY_SIMPLEX,
+                       0.8,
+                       (0, 255, 0),
+                       2
+                       )
+
+                       projected = pose_dict["projected_points"]
+                       for p_img, p_proj in zip(image_points, projected):
+                           cv2.circle(annotated, tuple(p_img.astype(int)), 10, (0,255,0), -1)
+                           cv2.circle(annotated, tuple(p_proj.astype(int)), 10, (0,0,255), -1)
+                           cv2.line(annotated,
+                               tuple(p_img.astype(int)),
+                               tuple(p_proj.astype(int)),
+                               (255,0,0), 5)
+                       cv2.imshow("Annotated", annotated)              
+                       cv2.waitKey(1)
+
 
                     cam_to_w_xyz = p = pose_dict["camera_position"]
                     body_to_w_quat = q = pose_dict["camera_orientation"]
 
                     if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"] and CONNECT_MAVLINK):
                         # Calculate actual pipeline latency just for monitoring
-                        pipeline_latency_ms = (int(time.time() * 1e6) - image_capture_time_usec) / 1000.0
+                        pipeline_latency_ms = (int(time.monotonic() * 1e6) - image_capture_time_usec) / 1000.0
                         print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
                         
                         msg = mavutil.mavlink.MAVLink_odometry_message(
@@ -428,9 +446,9 @@ def detect_fiducials(
 
                             # Corrected 21-value Upper-Triangle Pose Covariance
                             [
-                                0.000025, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                    0.000025, 0.0, 0.0, 0.0, 0.0,
-                                            0.000025, 0.0, 0.0, 0.0,
+                                0.0001, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                    0.0001, 0.0, 0.0, 0.0, 0.0,
+                                            0.0001, 0.0, 0.0, 0.0,
                                                 0.01, 0.0, 0.0,
                                                         0.01, 0.0,
                                                             0.01
@@ -444,7 +462,6 @@ def detect_fiducials(
                         )
                         
                         m.mav.send(msg)
-
 
 
         elif markertype == 'aruco':
@@ -511,12 +528,11 @@ def detect_fiducials(
                 
                 p = cam_pos = T_drone_to_wld[:3, 3]
                 q = cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
-                        
 
                 mavlink_timestamp = sync.get_autopilot_timestamp(image_capture_time_usec)
             
                 # Calculate actual pipeline latency just for monitoring
-                pipeline_latency_ms = (int(time.time() * 1e6) - image_capture_time_usec) / 1000.0
+                pipeline_latency_ms = (int(time.monotonic() * 1e6) - image_capture_time_usec) / 1000.0
                 print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
                 print("pose:", p)
                 msg = mavutil.mavlink.MAVLink_odometry_message(
@@ -716,7 +732,6 @@ def order_l_shape_markers(circles):
             best_corner_idx = i
 
     corner = pts[best_corner_idx]
-    print('corner', corner)
     # --- 2. Separate Arms ---
     other_indices = [i for i in range(8) if i != best_corner_idx]
     others = pts[other_indices]
@@ -749,8 +764,8 @@ def order_l_shape_markers(circles):
     final_indices = [best_corner_idx] + list(sorted_long) + list(sorted_short)
     
     image_points = pts[final_indices].astype(np.float32)
-    print(image_points)
-        # 3D object points in cm
+        
+    # 3D object points in cm
     object_points = np.array([
         [0.0,  0.0,  0.0],   # corner
         [0.125, 0.0,  0.0],
@@ -857,15 +872,15 @@ def order_l_shape_markers_old(circles):
     
     # 3D object points in cm (or meters, as specified by your coordinates)
     object_points = np.array([
-        [0.0,    0.0,    0.0],  # corner
-        [0.125,  0.0,    0.0],
-        [0.250,  0.0,    0.0],
-        [0.375,  0.0,    0.0],
-        [0.500,  0.0,    0.0],  # long arm
+        [0.0,    0.0,    0.230],  # corner
+        [0.130,  0.0,    0.0],
+        [0.255,  0.0,    0.0],
+        [0.380,  0.0,    0.0],
+        [0.505,  0.0,    0.0],  # long arm
 
-        [0.0,   -0.125,  0.0],
-        [0.0,   -0.250,  0.0],
-        [0.0,   -0.375,  0.0],  # short arm
+        [0.0,   0.125,  0.230],
+        [0.0,   0.250,  0.230],
+        [0.0,   0.375,  0.230],  # short arm
     ], dtype=np.float32)
 
     info = {
@@ -876,229 +891,6 @@ def order_l_shape_markers_old(circles):
 
     return image_points.astype(np.float32), object_points, info
 
-def detections_to_points_diffradiicircles(fitered_circles): # when the two arms have LEDs that have different radii, we can use that to help identify the corner and arm assignment. The corner is likely among the larger-radius LEDs, and the two arms can be separated by their radius groups. This can be more robust when the L-shape is viewed at an angle where the arms are foreshortened and angles are less reliable.
-    """
-    Convert 8 detected LED circles into ordered 2D-3D correspondences for an L-shape.
-
-    Assumptions
-    - Input contains exactly 8 circles: (x, y, r)
-    - The LEDs form an L-shape:
-        * long arm: 5 points total including the corner  -> 4 points away from corner
-        * short arm: 4 points total including the corner -> 3 points away from corner
-    - Corner LED is one of the larger-radius LEDs
-    - Adjacent LEDs are 12.5 cm apart in 3D
-    - Corner 3D coordinate is (0, 0, 0)
-    - Long arm is mapped to +X
-    - Short arm is mapped to +Y
-
-    Parameters
-    ----------
-    fitered_circles : array-like, shape (8, 3)
-        Each row is (x, y, r)
-
-    Returns
-    -------
-    image_points : np.ndarray, shape (8, 2), dtype=np.float32
-        2D image points in the same order as object_points
-
-    object_points : np.ndarray, shape (8, 3), dtype=np.float32
-        Corresponding 3D points:
-            [0,0,0]
-            [12.5,0,0], [25,0,0], [37.5,0,0], [50,0,0]
-            [0,12.5,0], [0,25,0], [0,37.5,0]
-
-    info : dict
-        Extra debug information:
-        - "corner_index"
-        - "large_radius_indices"
-        - "small_radius_indices"
-        - "long_arm_indices"
-        - "short_arm_indices"
-        - "radius_threshold"
-    """
-    circles = np.asarray(fitered_circles, dtype=float)
-    if circles.shape != (8, 3):
-        raise ValueError(f"Expected shape (8, 3), got {circles.shape}")
-
-    pts = circles[:, :2]
-    radii = circles[:, 2]
-
-    # ------------------------------------------------------------------
-    # 1) Split circles into two radius groups using the largest gap in r
-    # ------------------------------------------------------------------
-    sort_idx = np.argsort(radii)
-    sorted_r = radii[sort_idx]
-    gaps = np.diff(sorted_r)
-
-    if len(gaps) == 0:
-        raise ValueError("Need at least 2 circles to split by radius.")
-
-    split_at = int(np.argmax(gaps))
-    radius_threshold = 0.5 * (sorted_r[split_at] + sorted_r[split_at + 1])
-
-    large_radius_indices = np.where(radii > radius_threshold)[0].tolist()
-    small_radius_indices = np.where(radii <= radius_threshold)[0].tolist()
-
-    if len(large_radius_indices) == 0:
-        raise ValueError("Could not find any large-radius LEDs. Check detections/radii.")
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-    def fit_line_direction(points_2d):
-        """
-        Return unit direction of best-fit line through 2D points using SVD.
-        """
-        p = np.asarray(points_2d, dtype=float)
-        c = p.mean(axis=0)
-        _, _, vt = np.linalg.svd(p - c)
-        d = vt[0]
-        d = d / np.linalg.norm(d)
-        return d
-
-    def line_fit_error_with_corner(corner_pt, arm_pts):
-        """
-        Mean squared orthogonal distance of points to the best-fit line.
-        Fits a line through [corner + arm points].
-        """
-        all_pts = np.vstack([corner_pt[None, :], arm_pts])
-        center = all_pts.mean(axis=0)
-        _, _, vt = np.linalg.svd(all_pts - center)
-        direction = vt[0]
-        direction = direction / np.linalg.norm(direction)
-
-        diffs = all_pts - center
-        # Orthogonal distance to line
-        proj = np.outer(diffs @ direction, direction)
-        ortho = diffs - proj
-        mse = np.mean(np.sum(ortho ** 2, axis=1))
-        return mse, direction
-
-    def angle_between_dirs_deg(d1, d2):
-        """
-        Acute angle between two undirected line directions in degrees.
-        """
-        c = abs(float(np.dot(d1, d2)))
-        c = np.clip(c, -1.0, 1.0)
-        angle = math.degrees(math.acos(c))
-        # Because directions are undirected, angle is in [0, 90]
-        return angle
-
-    def sort_arm_points_from_corner(corner_pt, arm_pts, arm_indices):
-        """
-        Sort arm points by increasing distance from corner.
-        """
-        d = np.linalg.norm(arm_pts - corner_pt[None, :], axis=1)
-        order = np.argsort(d)
-        return arm_pts[order], [arm_indices[i] for i in order]
-
-    # ------------------------------------------------------------------
-    # 2) Find the corner among the large-radius LEDs
-    #
-    #    We try each large-radius point as a corner candidate.
-    #    For each candidate, we partition the remaining 7 points into:
-    #      - 4 points on the long arm
-    #      - 3 points on the short arm
-    #    and score how well each group forms a line with the corner.
-    # ------------------------------------------------------------------
-    best = None
-
-    for corner_idx in large_radius_indices:
-        corner_pt = pts[corner_idx]
-        other_indices = [i for i in range(8) if i != corner_idx]
-
-        for long_combo in combinations(other_indices, 4):
-            long_indices = list(long_combo)
-            short_indices = [i for i in other_indices if i not in long_indices]
-
-            long_pts = pts[long_indices]
-            short_pts = pts[short_indices]
-
-            long_err, long_dir = line_fit_error_with_corner(corner_pt, long_pts)
-            short_err, short_dir = line_fit_error_with_corner(corner_pt, short_pts)
-            angle = angle_between_dirs_deg(long_dir, short_dir)
-
-            # Prefer near-perpendicular arms; penalize if too parallel
-            angle_penalty = 0.0
-            if angle < 60.0:
-                angle_penalty += (60.0 - angle) ** 2
-            elif angle > 100.0:
-                angle_penalty += (angle - 95.0) ** 2
-
-            # Small bonus if corner is among the larger-radius points
-            radius_bonus = -0.1 * radii[corner_idx]
-
-            score = long_err + short_err + 0.01 * angle_penalty + radius_bonus
-
-            if (best is None) or (score < best["score"]):
-                best = {
-                    "score": score,
-                    "corner_idx": corner_idx,
-                    "long_indices": long_indices,
-                    "short_indices": short_indices,
-                    "long_err": long_err,
-                    "short_err": short_err,
-                    "angle_deg": angle,
-                }
-
-    if best is None:
-        raise ValueError("Could not identify a valid L-shape configuration.")
-
-    # ------------------------------------------------------------------
-    # 3) Sort points along each arm from the corner outward
-    # ------------------------------------------------------------------
-    corner_idx = best["corner_idx"]
-    corner_pt = pts[corner_idx]
-
-    long_pts = pts[best["long_indices"]]
-    short_pts = pts[best["short_indices"]]
-
-    long_pts_sorted, long_indices_sorted = sort_arm_points_from_corner(
-        corner_pt, long_pts, best["long_indices"]
-    )
-    short_pts_sorted, short_indices_sorted = sort_arm_points_from_corner(
-        corner_pt, short_pts, best["short_indices"]
-    )
-
-    # ------------------------------------------------------------------
-    # 4) Build ordered 2D image points
-    #
-    # Order convention:
-    #   0: corner
-    #   1..4: long arm (+X)
-    #   5..7: short arm (+Y)
-    # ------------------------------------------------------------------
-    image_points = np.vstack([
-        corner_pt[None, :],
-        long_pts_sorted,
-        short_pts_sorted
-    ]).astype(np.float32)
-
-    # 3D object points in cm
-    object_points = np.array([
-        [0.0,  0.0,  0.0],   # corner
-        [0.125, 0.0,  0.0],
-        [0.250, 0.0,  0.0],
-        [0.375, 0.0,  0.0],
-        [0.500, 0.0,  0.0],   # long arm
-
-        [0.0,  -0.125, 0.0],
-        [0.0,  -0.250, 0.0],
-        [0.0,  -0.375, 0.0],   # short arm
-    ], dtype=np.float32)
-
-    info = {
-        "corner_index": corner_idx,
-        "large_radius_indices": large_radius_indices,
-        "small_radius_indices": small_radius_indices,
-        "long_arm_indices": long_indices_sorted,
-        "short_arm_indices": short_indices_sorted,
-        "radius_threshold": float(radius_threshold),
-        "fit_score": float(best["score"]),
-        "arm_angle_deg": float(best["angle_deg"]),
-    }
-
-    return image_points, object_points, info
 
 def reprojection_error(object_points, image_points, rvec, tvec, K, dist_coeffs):
     projected, _ = cv2.projectPoints(
@@ -1155,18 +947,18 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
         image_points,
         K,
         None,
-        flags=cv2.SOLVEPNP_IPPE
+        flags=cv2.SOLVEPNP_ITERATIVE
     )
 
-    if not success:
-        # Fallback to iterative
-        success, rvec, tvec = cv2.solvePnP(
-            object_points,
-            image_points,
-            K,
-            None,
-            flags=cv2.SOLVEPNP_ITERATIVE
-        )
+#    if not success:
+#        # Fallback to iterative
+#        success, rvec, tvec = cv2.solvePnP(
+#            object_points,
+#            image_points,
+#            K,
+#            None,
+#            flags=cv2.SOLVEPNP_ITERATIVE
+#        )
 
     if not success:
         return {"success": False}
