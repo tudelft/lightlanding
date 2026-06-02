@@ -221,6 +221,9 @@ def detect_fiducials(
        cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Annotated', 700, 700) 
 
+       cv2.namedWindow("Annotated_colors", cv2.WINDOW_NORMAL)
+       cv2.resizeWindow('Annotated_colors', 700, 700) 
+
     camera_matrix = rotate_intrinsics_180(camera_matrix, 1456, 1088) # because frame is rotated below
 		
     while True:
@@ -278,6 +281,7 @@ def detect_fiducials(
             blurred = cv2.GaussianBlur(image_undistorted, (21, 21), 0)
 
             annotated = blurred.copy()
+            annotated_colors = blurred.copy()
             blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
             
             # threshold for top 10%
@@ -323,6 +327,7 @@ def detect_fiducials(
 
                 circles = np.append(circles, [[x, y, radius]], axis=0)
 
+
 #            print('total circles', len(circles))
             # deterministic order
             order = np.lexsort((circles[:, 1], circles[:, 0]))
@@ -330,32 +335,54 @@ def detect_fiducials(
             
             # fitered_circles = circles
             fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol, line_tol, min_group_size, cross_ratio_tol) #cr: 0.015
+            filteredcircles_avgcolor = []
 #            print('filtered circles', len(fitered_circles))
 
-    #        led_count = 0
-    #        for circle in fitered_circles:    
-    #            # Draw annotation
-    #            center = (int(circle[0]), int(circle[1]))
-    #            radius = int(circle[2])
-    #            cv2.circle(annotated, center, radius + 1, (0, 255, 0), 2)
-    #            cv2.putText(
-    #                annotated,
-    #                f"LED {led_count + 1}",
-    #                (center[0] + 5, center[1] - 5),
-    #                cv2.FONT_HERSHEY_SIMPLEX,
-    #                0.5,
-    #                (0, 255, 0),
-    #                1,
-    #                cv2.LINE_AA,
-    #            )
+            for circle in fitered_circles:    
+                center = (int(circle[0]), int(circle[1]))
+                radius = int(circle[2])
+                h, w = annotated_colors.shape[:2]
+                y, x = np.ogrid[:h, :w]
+                inside_circle = (x-center[0])**2 + (y-center[1])**2 <= radius**2
+                led_mean = int(image_undistorted[inside_circle].mean())
+                filteredcircles_avgcolor.append(led_mean)
 
-    #           led_count += 1
+            filteredcircles_avgcolor_sorted = np.argsort(filteredcircles_avgcolor)
+        
+            if (show_visualization):
+               led_count = 0
+               for circle in fitered_circles:    
+                   # Draw annotation
+                   center = (int(circle[0]), int(circle[1]))
+                   radius = int(circle[2])
+                   h, w = annotated_colors.shape[:2]
+                   y, x = np.ogrid[:h, :w]
+                   inside_circle = (x-center[0])**2 + (y-center[1])**2 <= radius**2
+                   led_mean = int(image_undistorted[inside_circle].mean())
+                   led_type = np.where(filteredcircles_avgcolor_sorted==led_count)[0] <= 3  #first 4 LEDs based on min avg intensity
+                   ann_circle_color = (0,0,255) if (led_type==1) else (0,255,0)
+                   
+                   filteredcircles_avgcolor.append(led_mean)
+                   cv2.circle(annotated_colors, center, radius + 1, ann_circle_color, 2)
+                   cv2.putText(
+                      annotated_colors,
+                      f"Int {led_mean}",
+                      (center[0] + 5, center[1] - 5),
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      0.5,
+                      ann_circle_color,
+                      1,
+                      cv2.LINE_AA,
+                      )
+
+                   led_count += 1
 
             # print(f"Detected LEDs: {led_count}")
 
             # Show images
     #        cv2.imshow("Thresholded", thresh)
-    #        cv2.imshow("Annotated", annotated)
+            cv2.imshow("Annotated_colors", annotated_colors)
+            cv2.waitKey(1)
 
     #        if cv2.waitKey(1) & 0xFF == ord("q"):
     #            cv2.destroyAllWindows()
@@ -385,7 +412,7 @@ def detect_fiducials(
                         1,
                         cv2.LINE_AA,
                        )
-#                    led_count += 1
+                    led_count += 1
 
 #                cv2.imshow("Annotated", annotated)              
 #                print(f"Detected LEDs: {led_count}")
