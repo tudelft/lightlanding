@@ -391,7 +391,9 @@ def detect_fiducials(
             # print(len(fitered_circles), "circles after line/radius filtering")
             if (len(fitered_circles) == 8):
                 # print("Attempting pose estimation with", len(fitered_circles), "circles...")
-                image_points, object_points, info = order_l_shape_markers(fitered_circles)
+                image_points, object_points, pose_dict = pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor, new_K, np.zeros((1, 4)))
+
+                # image_points, object_points, info = order_l_shape_markers(fitered_circles)
                 # print("2D-3D correspondences:", len(image_points), len(object_points))
                 
                 led_count = 0
@@ -400,7 +402,6 @@ def detect_fiducials(
                     center = (int(image_point[0]), int(image_point[1]))
                     #print('center', center)
                     if (show_visualization):
-
                        cv2.circle(annotated, center, 10, (0, 255, 0), 2)
                        cv2.putText(
                         annotated,
@@ -419,7 +420,7 @@ def detect_fiducials(
 
 
                 if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
-                    pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
+                    # pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
                     # print('Reprojection error:', pose_dict["reprojection_error"])
                     print('Reprojection error:', pose_dict["reprojection_error"])
                     x = pose_dict["camera_position"][0]
@@ -429,7 +430,6 @@ def detect_fiducials(
 
                     text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
                     if (show_visualization):
-
                        cv2.putText(
                        annotated,
                        text,
@@ -439,7 +439,6 @@ def detect_fiducials(
                        (0, 255, 0),
                        2
                        )
-
                        projected = pose_dict["projected_points"]
                        for p_img, p_proj in zip(image_points, projected):
                            cv2.circle(annotated, tuple(p_img.astype(int)), 10, (0,255,0), -1)
@@ -726,6 +725,83 @@ def filter_circles_same_line_similar_radius(
 
 import numpy as np
 from scipy.spatial.distance import cdist
+import itertools
+
+def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, dist_coeffs):
+    green_arm = np.where(filteredcircles_avgcolor_sorted <= 3)[0]  #first 4 LEDs based on min avg intensity
+    amber_arm = np.where(filteredcircles_avgcolor_sorted > 3)[0]  #other 4 LEDs based on min avg intensity
+
+    green_circles_indices = green_arm[:,:2]
+    amber_circles_indices = amber_arm[:,:2]
+
+    green_circles_indices_lexsorted = green_circles_indices[np.lexsort((green_circles_indices[:,1], green_circles_indices[:,0]))]
+    green_edges = green_circles_indices_lexsorted[0], green_circles_indices_lexsorted[-1]
+
+    amber_circles_indices_lexsorted = amber_circles_indices[np.lexsort((amber_circles_indices[:,1], amber_circles_indices[:,0]))]
+    amber_edges = amber_circles_indices_lexsorted[0], amber_circles_indices_lexsorted[-1]
+
+    image_points_perms = np.array(list(itertools.permutations(np.vstack(amber_edges, green_edges))))
+    # 3D object points in cm (or meters, as specified by your coordinates)
+    object_points = np.array([
+        [0.0,    0.0,    0.230],  # corner, long amber+green arm, amber led
+        [0.130,  0.0,    0.0],  # long amber+green arm, first green led
+        [0.505,  0.0,    0.0],  # long amber+green arm, last green led
+        [0.0,   0.375,  0.230],  # short arm, last amber led
+    ], dtype=np.float32)
+
+    min_reproj_error = float('inf')
+    image_points_best_config = None
+    rvec_best = None
+    tvec_best = None
+    projected_points_best = None
+
+    for image_points in image_points_perms:
+        success, positive_depth, reproj_err, rvec, tvec, projected_points = estimate_pose_p3p(object_points, image_points, new_K, dist_coeffs)
+        if success and positive_depth and reproj_err < min_reproj_error:
+            image_points_best_config = image_points
+            min_reproj_error = reproj_err
+            rvec_best = rvec
+            tvec_best = tvec
+            projected_points_best = projected_points
+
+    if image_points_best_config is not None:
+        R_wld_to_cam, _ = cv2.Rodrigues(rvec_best)
+        #print('tvec', tvec)
+        T_wld_to_cam = np.eye(4)
+        T_wld_to_cam[:3, :3] = R_wld_to_cam
+        T_wld_to_cam[:3, 3] = tvec_best.flatten()
+
+        # Invert transform
+        T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
+
+        T_cam_to_drone = np.array([
+            [ 0, -1,  0, 0],
+            [ 1,  0,  0, 0],
+            [ 0,  0,  1, 0],
+            [ 0,  0,  0, 1],
+        ])
+
+        T_drone_to_wld = T_cam_to_wld 
+        # T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
+
+        cam_pos = T_drone_to_wld[:3, 3]
+        cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
+        pose_dict = {
+            "success": True,
+            "rvec": rvec,
+            "tvec": tvec,
+            "R": R_wld_to_cam,
+            "camera_position": cam_pos,
+            "camera_orientation": cam_orient_quat,
+            "reprojection_error": min_reproj_error,
+            "projected_points": projected_points_best,
+            "positive_depth": True,
+        }
+
+        return image_points_best_config, object_points, pose_dict
+    
+    else:
+        return None, None, {"success": False}
 
 def order_l_shape_markers(circles):
     pts = np.array(circles)[:, :2].astype(np.float32)
@@ -937,6 +1013,40 @@ def camera_position_from_pose(Rot, tvec):
     """
     return -Rot.T @ tvec
 
+def estimate_pose_p3p(object_points, image_points, K, dist_coeffs):
+    object_points = np.ascontiguousarray(object_points, dtype=np.float64).reshape(-1, 3)
+    image_points = np.ascontiguousarray(image_points, dtype=np.float64).reshape(-1, 2)
+    K = np.asarray(K, dtype=np.float64)
+
+    if object_points.shape[0] < 4:
+        raise ValueError("Need at least 4 points")
+    if image_points.shape[0] != object_points.shape[0]:
+        raise ValueError("image_points and object_points must match in count")
+
+    # IPPE is designed for planar pose estimation.
+    success, rvec, tvec = cv2.solvePnP(
+        object_points,
+        image_points,
+        K,
+        None,
+        flags=cv2.SOLVEPNP_P3P
+    )
+
+    R_wld_to_cam, _ = cv2.Rodrigues(rvec)
+    if not success:
+        return  False, False
+
+    err, projected = reprojection_error(
+        object_points, image_points, rvec, tvec, K, None
+    )
+             
+    # cam_pos = camera_position_from_pose(R_mat, tvec)
+
+    # Check that all points are in front of the camera
+    pts_cam = (R_wld_to_cam @ object_points.T + tvec).T
+    positive_depth = np.all(pts_cam[:, 2] > 0)
+
+    return success, positive_depth, err, rvec, tvec, projected
 
 def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     """
