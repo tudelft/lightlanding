@@ -391,7 +391,7 @@ def detect_fiducials(
             # print(len(fitered_circles), "circles after line/radius filtering")
             if (len(fitered_circles) == 8):
                 # print("Attempting pose estimation with", len(fitered_circles), "circles...")
-                image_points, object_points, pose_dict = pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor, new_K, np.zeros((1, 4)))
+                image_points, object_points, pose_dict = pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, np.zeros((1, 4)))
 
                 # image_points, object_points, info = order_l_shape_markers(fitered_circles)
                 # print("2D-3D correspondences:", len(image_points), len(object_points))
@@ -423,12 +423,13 @@ def detect_fiducials(
                     # pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
                     # print('Reprojection error:', pose_dict["reprojection_error"])
                     print('Reprojection error:', pose_dict["reprojection_error"])
+                    print('Positive depth', pose_dict["positive_depth"])
                     x = pose_dict["camera_position"][0]
                     y = pose_dict["camera_position"][1]
                     z = pose_dict["camera_position"][2]
                     print("Estimated pose:", x, y, z) if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]) else print("Pose estimation failed")
 
-                    text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+                    text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}"
                     if (show_visualization):
                        cv2.putText(
                        annotated,
@@ -728,25 +729,33 @@ from scipy.spatial.distance import cdist
 import itertools
 
 def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, dist_coeffs):
-    green_arm = np.where(filteredcircles_avgcolor_sorted <= 3)[0]  #first 4 LEDs based on min avg intensity
-    amber_arm = np.where(filteredcircles_avgcolor_sorted > 3)[0]  #other 4 LEDs based on min avg intensity
+    green_arm = fitered_circles[filteredcircles_avgcolor_sorted[:4]] #first 4 LEDs based on min avg intensity
+    amber_arm = fitered_circles[filteredcircles_avgcolor_sorted[4:]]  #other 4 LEDs based on min avg intensity
 
+    
     green_circles_indices = green_arm[:,:2]
     amber_circles_indices = amber_arm[:,:2]
 
     green_circles_indices_lexsorted = green_circles_indices[np.lexsort((green_circles_indices[:,1], green_circles_indices[:,0]))]
-    green_edges = green_circles_indices_lexsorted[0], green_circles_indices_lexsorted[-1]
+    green_corners = green_circles_indices_lexsorted[0], green_circles_indices_lexsorted[-1]
 
     amber_circles_indices_lexsorted = amber_circles_indices[np.lexsort((amber_circles_indices[:,1], amber_circles_indices[:,0]))]
-    amber_edges = amber_circles_indices_lexsorted[0], amber_circles_indices_lexsorted[-1]
+    amber_corners = amber_circles_indices_lexsorted[0], amber_circles_indices_lexsorted[-1]
 
-    image_points_perms = np.array(list(itertools.permutations(np.vstack(amber_edges, green_edges))))
+#    image_points_perms = np.array(list(itertools.permutations(np.vstack((amber_edges, green_edges)))))
+    image_points_perms = np.array([
+    [amber_corners[0], amber_corners[1], green_corners[0], green_corners[1]],
+    [amber_corners[1], amber_corners[0], green_corners[0], green_corners[1]],
+    [amber_corners[0], amber_corners[1], green_corners[1], green_corners[0]],
+    [amber_corners[1], amber_corners[0], green_corners[1], green_corners[0]]
+    ], dtype=np.float32) 
+    
     # 3D object points in cm (or meters, as specified by your coordinates)
     object_points = np.array([
-        [0.0,    0.0,    0.230],  # corner, long amber+green arm, amber led
-        [0.130,  0.0,    0.0],  # long amber+green arm, first green led
-        [0.505,  0.0,    0.0],  # long amber+green arm, last green led
-        [0.0,   0.375,  0.230],  # short arm, last amber led
+        [0.0,    0.0,    -0.230],  # corner, long amber+green arm, amber led
+        [0.375,   0.0,  -0.230],  # short arm, last amber led
+        [0.0,  -0.130,    0.0],  # long amber+green arm, first green led
+        [0.0,  -0.505,    0.0],  # long amber+green arm, last green led
     ], dtype=np.float32)
 
     min_reproj_error = float('inf')
@@ -754,15 +763,17 @@ def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new
     rvec_best = None
     tvec_best = None
     projected_points_best = None
+    positive_depth_best = None
 
     for image_points in image_points_perms:
-        success, positive_depth, reproj_err, rvec, tvec, projected_points = estimate_pose_p3p(object_points, image_points, new_K, dist_coeffs)
+        success, positive_depth, reproj_err, rvec, tvec, projected_points = estimate_pose_nonplanar(object_points, image_points, new_K, dist_coeffs)
         if success and positive_depth and reproj_err < min_reproj_error:
             image_points_best_config = image_points
             min_reproj_error = reproj_err
             rvec_best = rvec
             tvec_best = tvec
             projected_points_best = projected_points
+            positive_depth_best = positive_depth
 
     if image_points_best_config is not None:
         R_wld_to_cam, _ = cv2.Rodrigues(rvec_best)
@@ -788,14 +799,14 @@ def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new
         cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
         pose_dict = {
             "success": True,
-            "rvec": rvec,
-            "tvec": tvec,
+            "rvec": rvec_best,
+            "tvec": tvec_best,
             "R": R_wld_to_cam,
             "camera_position": cam_pos,
             "camera_orientation": cam_orient_quat,
             "reprojection_error": min_reproj_error,
             "projected_points": projected_points_best,
-            "positive_depth": True,
+            "positive_depth": positive_depth_best,
         }
 
         return image_points_best_config, object_points, pose_dict
@@ -1013,7 +1024,7 @@ def camera_position_from_pose(Rot, tvec):
     """
     return -Rot.T @ tvec
 
-def estimate_pose_p3p(object_points, image_points, K, dist_coeffs):
+def estimate_pose_nonplanar(object_points, image_points, K, dist_coeffs):
     object_points = np.ascontiguousarray(object_points, dtype=np.float64).reshape(-1, 3)
     image_points = np.ascontiguousarray(image_points, dtype=np.float64).reshape(-1, 2)
     K = np.asarray(K, dtype=np.float64)
@@ -1023,13 +1034,12 @@ def estimate_pose_p3p(object_points, image_points, K, dist_coeffs):
     if image_points.shape[0] != object_points.shape[0]:
         raise ValueError("image_points and object_points must match in count")
 
-    # IPPE is designed for planar pose estimation.
     success, rvec, tvec = cv2.solvePnP(
         object_points,
         image_points,
         K,
         None,
-        flags=cv2.SOLVEPNP_P3P
+        flags=cv2.SOLVEPNP_EPNP
     )
 
     R_wld_to_cam, _ = cv2.Rodrigues(rvec)
