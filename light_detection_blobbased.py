@@ -743,14 +743,14 @@ def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new
     amber_corners = amber_circles_indices_lexsorted[0], amber_circles_indices_lexsorted[-1]
 
 #    image_points_perms = np.array(list(itertools.permutations(np.vstack((amber_edges, green_edges)))))
-    image_points_perms = np.array([
+    image_points_perms = np.array([   #all 4 possible combinations of corner correspondences since we don't know apriori which is which
     [amber_corners[0], amber_corners[1], green_corners[0], green_corners[1]],
     [amber_corners[1], amber_corners[0], green_corners[0], green_corners[1]],
     [amber_corners[0], amber_corners[1], green_corners[1], green_corners[0]],
     [amber_corners[1], amber_corners[0], green_corners[1], green_corners[0]]
     ], dtype=np.float32) 
     
-    # 3D object points in cm (or meters, as specified by your coordinates)
+    # 3D object points in meters
     object_points = np.array([
         [0.0,    0.0,    -0.230],  # corner, long amber+green arm, amber led
         [0.375,   0.0,  -0.230],  # short arm, last amber led
@@ -1034,23 +1034,51 @@ def estimate_pose_nonplanar(object_points, image_points, K, dist_coeffs):
     if image_points.shape[0] != object_points.shape[0]:
         raise ValueError("image_points and object_points must match in count")
 
-    success, rvec, tvec = cv2.solvePnP(
+    # success, rvec, tvec = cv2.solvePnP(
+    #     object_points,
+    #     image_points,
+    #     K,
+    #     None,
+    #     flags=cv2.SOLVEPNP_EPNP
+    # )
+
+    # R_wld_to_cam, _ = cv2.Rodrigues(rvec)
+    # if not success:
+    #     return  False, False
+
+    success, rvecs, tvecs, reproj_errors = cv2.solvePnPGeneric(
         object_points,
         image_points,
         K,
-        None,
-        flags=cv2.SOLVEPNP_EPNP
+        dist_coeffs,
+        flags=cv2.SOLVEPNP_AP3P
     )
 
-    R_wld_to_cam, _ = cv2.Rodrigues(rvec)
     if not success:
-        return  False, False
+        return  False, False, None, None, None, None
+
+    best_idx = np.argmin(
+        [float(err) for err in reproj_errors]
+    )
+
+    rvec = rvecs[best_idx]
+    tvec = tvecs[best_idx]
+
+    rvec, tvec = cv2.solvePnPRefineLM(
+        object_points,
+        image_points,
+        K,
+        dist_coeffs,
+        rvec,
+        tvec
+    )
 
     err, projected = reprojection_error(
-        object_points, image_points, rvec, tvec, K, None
+        object_points, image_points, rvec, tvec, K, dist_coeffs
     )
              
     # cam_pos = camera_position_from_pose(R_mat, tvec)
+    R_wld_to_cam, _ = cv2.Rodrigues(rvec)
 
     # Check that all points are in front of the camera
     pts_cam = (R_wld_to_cam @ object_points.T + tvec).T
