@@ -224,7 +224,6 @@ def detect_fiducials(
 
 	# try:
     start_time = time.time()
-		
 
 #    cv2.waitKey(1)
     if (show_visualization):
@@ -740,20 +739,42 @@ import numpy as np
 from scipy.spatial.distance import cdist
 import itertools
 
+def get_endpoints_of_a_noisy_line(points):
+    # PCA direction
+    center = points.mean(axis=0)
+    X = points - center
+
+    _, _, vt = np.linalg.svd(X, full_matrices=False)
+    direction = vt[0]
+
+    # Position of each point along the arm
+    proj = X @ direction
+
+    # End circles
+    idx1 = np.argmin(proj)
+    idx2 = np.argmax(proj)
+
+    end1 = points[idx1]
+    end2 = points[idx2]
+
+    return end1, end2
+
 def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, dist_coeffs):
     green_arm = fitered_circles[filteredcircles_avgcolor_sorted[:4]] #first 4 LEDs based on min avg intensity
     amber_arm = fitered_circles[filteredcircles_avgcolor_sorted[4:]]  #other 4 LEDs based on min avg intensity
-
     
     green_circles_indices = green_arm[:,:2]
     amber_circles_indices = amber_arm[:,:2]
 
-    green_circles_indices_lexsorted = green_circles_indices[np.lexsort((green_circles_indices[:,1], green_circles_indices[:,0]))]
-    green_corners = green_circles_indices_lexsorted[0], green_circles_indices_lexsorted[-1]
+    # green_circles_indices_lexsorted = green_circles_indices[np.lexsort((green_circles_indices[:,1], green_circles_indices[:,0]))]
+    # green_corners = green_circles_indices_lexsorted[0], green_circles_indices_lexsorted[-1]
 
-    amber_circles_indices_lexsorted = amber_circles_indices[np.lexsort((amber_circles_indices[:,1], amber_circles_indices[:,0]))]
-    amber_corners = amber_circles_indices_lexsorted[0], amber_circles_indices_lexsorted[-1]
+    # amber_circles_indices_lexsorted = amber_circles_indices[np.lexsort((amber_circles_indices[:,1], amber_circles_indices[:,0]))]
+    # amber_corners = amber_circles_indices_lexsorted[0], amber_circles_indices_lexsorted[-1]
 
+    green_corners = get_endpoints_of_a_noisy_line(green_circles_indices)
+    amber_corners = get_endpoints_of_a_noisy_line(amber_circles_indices)
+                                                  
 #    image_points_perms = np.array(list(itertools.permutations(np.vstack((amber_edges, green_edges)))))
     image_points_perms = np.array([   #all 4 possible combinations of corner correspondences since we don't know apriori which is which
     [amber_corners[0], amber_corners[1], green_corners[0], green_corners[1]],
