@@ -40,6 +40,15 @@ camera_matrix = np.array(
  [  0.,           0.,           1.        ]])
 dist_coeffs = np.array([-0.13573729,  0.03353202, -0.0345132,   0.01030255])
 
+s=0.6 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
+def scale_camera_matrix(K, s):
+    K_new = K.copy().astype(float)
+    K_new[0, 0] *= s
+    K_new[1, 1] *= s
+    K_new[0, 2] *= s
+    K_new[1, 2] *= s
+    return K_new
+
 def get_fc_time_us(master):
     while True:
         msg = master.recv_match(
@@ -198,7 +207,7 @@ def detect_fiducials(
         from picamera2 import Picamera2
         picam2 = Picamera2()
         config = picam2.create_video_configuration(
-            main={"size": (1456, 1088), "format": "RGB888"},
+            main={"size": (int(s*1456), int(s*1088)), "format": "RGB888"},
             buffer_count=1,
             queue=False
         )
@@ -209,7 +218,7 @@ def detect_fiducials(
         picam2.set_controls(controls)
         picam2.start()
 
-
+        camera_matrix = scale_camera_matrix(camera_matrix, s)
 
 	# try:
     start_time = time.time()
