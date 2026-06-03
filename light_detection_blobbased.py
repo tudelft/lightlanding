@@ -24,7 +24,8 @@ radius_tol=0.5
 line_tol=8.0
 min_group_size=4 
 cross_ratio_tol=0.025
-
+reproj_threshold = 5
+brightness_threshold = 70
 # ArUco setup
 marker_size = 0.1   # meters
 target_id = 0
@@ -53,9 +54,9 @@ def get_fc_time_us(master):
             return msg.time_boot_ms * 1000
 
 def detect_fiducials(
+    brightness_threshold,
     min_area: int = 1,
     max_area: int = 40000,
-    brightness_threshold: int = 80,
 ) -> None:
 
     global camera_matrix
@@ -213,11 +214,12 @@ def detect_fiducials(
 	# try:
     start_time = time.time()
 		
-#    cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
-#    cv2.resizeWindow('Thresholded', 700, 700) 
 
 #    cv2.waitKey(1)
     if (show_visualization):
+       cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
+       cv2.resizeWindow('Thresholded', 700, 700) 
+
        cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Annotated', 700, 700) 
 
@@ -360,7 +362,7 @@ def detect_fiducials(
                    inside_circle = (x-center[0])**2 + (y-center[1])**2 <= radius**2
                    led_mean = int(image_undistorted[inside_circle].mean())
                    led_type = np.where(filteredcircles_avgcolor_sorted==led_count)[0] <= 3  #first 4 LEDs based on min avg intensity
-                   ann_circle_color = (0,0,255) if (led_type==1) else (0,255,0)
+                   ann_circle_color = (0,255,0) if (led_type==1) else (0,0,255)
                    
                    filteredcircles_avgcolor.append(led_mean)
                    cv2.circle(annotated_colors, center, radius + 1, ann_circle_color, 2)
@@ -379,10 +381,10 @@ def detect_fiducials(
 
             # print(f"Detected LEDs: {led_count}")
 
-            # Show images
-    #        cv2.imshow("Thresholded", thresh)
-            cv2.imshow("Annotated_colors", annotated_colors)
-            cv2.waitKey(1)
+               ## Show images
+               cv2.imshow("Thresholded", thresh)
+               cv2.imshow("Annotated_colors", annotated_colors)
+               cv2.waitKey(1)
 
     #        if cv2.waitKey(1) & 0xFF == ord("q"):
     #            cv2.destroyAllWindows()
@@ -396,12 +398,12 @@ def detect_fiducials(
                 # image_points, object_points, info = order_l_shape_markers(fitered_circles)
                 # print("2D-3D correspondences:", len(image_points), len(object_points))
                 
-                led_count = 0
-                for image_point in image_points:    
-    			   # Draw annotation
-                    center = (int(image_point[0]), int(image_point[1]))
-                    #print('center', center)
-                    if (show_visualization):
+                if (show_visualization):
+                   led_count = 0
+                   for image_point in image_points:    
+         			   # Draw annotation
+                       center = (int(image_point[0]), int(image_point[1]))
+                       #print('center', center)
                        cv2.circle(annotated, center, 10, (0, 255, 0), 2)
                        cv2.putText(
                         annotated,
@@ -413,11 +415,10 @@ def detect_fiducials(
                         1,
                         cv2.LINE_AA,
                        )
-                    led_count += 1
+                       led_count += 1
 
 #                cv2.imshow("Annotated", annotated)              
 #                print(f"Detected LEDs: {led_count}")
-
 
                 if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
                     # pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
@@ -427,10 +428,10 @@ def detect_fiducials(
                     x = pose_dict["camera_position"][0]
                     y = pose_dict["camera_position"][1]
                     z = pose_dict["camera_position"][2]
-                    print("Estimated pose:", x, y, z) if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]) else print("Pose estimation failed")
+                    print("Estimated pose:", x, y, z) if (pose_dict["reprojection_error"] < reproj_threshold and pose_dict["positive_depth"]) else print("Pose estimation failed")
 
                     text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}"
-                    if (show_visualization):
+                    if (show_visualization and pose_dict["reprojection_error"] < reproj_threshold):
                        cv2.putText(
                        annotated,
                        text,
@@ -1227,4 +1228,4 @@ def rotate_intrinsics_180(K, image_width, image_height):
 
 
 if __name__ == "__main__":
-    detect_fiducials()
+    detect_fiducials(brightness_threshold)
