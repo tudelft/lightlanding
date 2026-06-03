@@ -19,13 +19,15 @@ CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odom
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
 show_visualization = True
+
+exposure_time = 3000 # microseconds
 # L-shape marker setup
 radius_tol=0.5 
 line_tol=8.0
 min_group_size=4 
 cross_ratio_tol=0.025
-reproj_threshold = 5
-brightness_threshold = 70
+reproj_threshold = 2.5
+brightness_threshold = 60
 # ArUco setup
 marker_size = 0.1   # meters
 target_id = 0
@@ -213,7 +215,7 @@ def detect_fiducials(
         )
         picam2.configure(config)
         controls = {
-        "ExposureTime": 4000,   # microseconds
+        "ExposureTime": exposure_time,   # microseconds
         "AnalogueGain": 1.0}
         picam2.set_controls(controls)
         picam2.start()
@@ -235,7 +237,7 @@ def detect_fiducials(
        cv2.namedWindow("Annotated_colors", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Annotated_colors', 700, 700) 
 
-    camera_matrix = rotate_intrinsics_180(camera_matrix, 1456, 1088) # because frame is rotated below
+    camera_matrix = rotate_intrinsics_180(camera_matrix, s*1456, s*1088) # because frame is rotated below
 		
     while True:
 #        time.sleep(1)
@@ -289,7 +291,7 @@ def detect_fiducials(
 
         if (markertype == 'Lshape'):
             print('Searching for LEDs...')
-            blurred = cv2.GaussianBlur(image_undistorted, (21, 21), 0)
+            blurred = cv2.GaussianBlur(image_undistorted, (9, 9), 0)
 
             annotated = blurred.copy()
             annotated_colors = blurred.copy()
@@ -439,7 +441,7 @@ def detect_fiducials(
                     z = pose_dict["camera_position"][2]
                     print("Estimated pose:", x, y, z) if (pose_dict["reprojection_error"] < reproj_threshold and pose_dict["positive_depth"]) else print("Pose estimation failed")
 
-                    text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}"
+                    text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}, {pose_dict["reprojection_error"]:.2f}"
                     if (show_visualization and pose_dict["reprojection_error"] < reproj_threshold):
                        cv2.putText(
                        annotated,
@@ -764,8 +766,8 @@ def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new
     object_points = np.array([
         [0.0,    0.0,    -0.230],  # corner, long amber+green arm, amber led
         [0.375,   0.0,  -0.230],  # short arm, last amber led
-        [0.0,  -0.130,    0.0],  # long amber+green arm, first green led
-        [0.0,  -0.505,    0.0],  # long amber+green arm, last green led
+        [0.0,  -0.255,    0.0],  # long amber+green arm, first green led
+        [0.0,  -0.630,    0.0],  # long amber+green arm, last green led
     ], dtype=np.float32)
 
     min_reproj_error = float('inf')
