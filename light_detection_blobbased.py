@@ -18,7 +18,7 @@ VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization = True
+show_visualization = False
 
 exposure_time = 3000 # microseconds
 # L-shape marker setup
@@ -26,7 +26,7 @@ radius_tol=0.5
 line_tol=8.0
 min_group_size=4 
 cross_ratio_tol=0.025
-reproj_threshold = 2.5
+reproj_threshold = 5
 brightness_threshold = 60
 # ArUco setup
 marker_size = 0.1   # meters
@@ -484,9 +484,9 @@ def detect_fiducials(
 
                             # Corrected 21-value Upper-Triangle Pose Covariance
                             [
-                                0.001, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                    0.001, 0.0, 0.0, 0.0, 0.0,
-                                            0.001, 0.0, 0.0, 0.0,
+                                0.0004, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                    0.0004, 0.0, 0.0, 0.0, 0.0,
+                                            0.0004, 0.0, 0.0, 0.0,
                                                 0.01, 0.0, 0.0,
                                                         0.01, 0.0,
                                                             0.01
@@ -825,8 +825,8 @@ def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new
             [ 0,  0,  0, 1],
         ])
 
-        T_drone_to_wld = T_cam_to_wld 
-        # T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
+        #T_drone_to_wld = T_cam_to_wld 
+        T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
 
         cam_pos = T_drone_to_wld[:3, 3]
         cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
@@ -1214,7 +1214,7 @@ def estimate_planar_pose(object_points, image_points, K, dist_coeffs):
     ])
 
     T_drone_to_wld = T_cam_to_wld 
-    # T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
+    #T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
 
     cam_pos = T_drone_to_wld[:3, 3]
     cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
