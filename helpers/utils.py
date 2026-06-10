@@ -1,3 +1,5 @@
+import numpy as np
+
 def scale_camera_matrix(K, s):
     K_new = K.copy().astype(float)
     K_new[0, 0] *= s
