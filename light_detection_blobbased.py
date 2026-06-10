@@ -17,8 +17,8 @@ USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 
-markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization = False
+markertype = 'aruco'  # 'Lshape' or 'aruco'
+show_visualization = True
 
 exposure_time = 3000 # microseconds
 # L-shape marker setup
@@ -26,7 +26,7 @@ radius_tol=0.5
 line_tol=8.0
 min_group_size=4 
 cross_ratio_tol=0.025
-reproj_threshold = 5
+reproj_threshold = 10 # default 5
 brightness_threshold = 60
 # ArUco setup
 marker_size = 0.1   # meters
@@ -405,7 +405,7 @@ def detect_fiducials(
                 # print("Attempting pose estimation with", len(fitered_circles), "circles...")
                 image_points, object_points, pose_dict = pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, np.zeros((1, 4)))
 
-                # image_points, object_points, info = order_l_shape_markers(fitered_circles)
+                #image_points, object_points, info = order_l_shape_markers(fitered_circles)
                 # print("2D-3D correspondences:", len(image_points), len(object_points))
                 
                 if (show_visualization):
@@ -431,7 +431,7 @@ def detect_fiducials(
 #                print(f"Detected LEDs: {led_count}")
 
                 if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
-                    # pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
+                    #pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
                     # print('Reprojection error:', pose_dict["reprojection_error"])
                     print('Reprojection error:', pose_dict["reprojection_error"])
                     print('Positive depth', pose_dict["positive_depth"])
@@ -484,9 +484,9 @@ def detect_fiducials(
 
                             # Corrected 21-value Upper-Triangle Pose Covariance
                             [
-                                0.0004, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                    0.0004, 0.0, 0.0, 0.0, 0.0,
-                                            0.0004, 0.0, 0.0, 0.0,
+                                0.0009, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                    0.0009, 0.0, 0.0, 0.0, 0.0,
+                                            0.0009, 0.0, 0.0, 0.0,
                                                 0.01, 0.0, 0.0,
                                                         0.01, 0.0,
                                                             0.01
@@ -509,7 +509,7 @@ def detect_fiducials(
             print('Found ids', ids)
             if ids is not None:
                 ids = ids.flatten()
-#                cv2.aruco.drawDetectedMarkers(image_undistorted, corners, ids)
+                cv2.aruco.drawDetectedMarkers(image_undistorted, corners, ids)
 
                 for i, marker_id in enumerate(ids):
                     if marker_id == target_id:
@@ -524,26 +524,35 @@ def detect_fiducials(
                         rvec = rvec[0][0]
                         tvec = tvec[0][0]
 
-#                        cv2.drawFrameAxes(image_undistorted, new_K, np.zeros(4), rvec, tvec, 0.05)
+                        cv2.drawFrameAxes(image_undistorted, new_K, np.zeros(4), rvec, tvec, 0.05)
 
-#                        x, y, z = tvec
-#                        text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+                        R_wld_to_cam, _ = cv2.Rodrigues(rvec)
+                        T_wld_to_cam = np.eye(4)
+                        T_wld_to_cam[:3, :3] = R_wld_to_cam
+                        T_wld_to_cam[:3, 3] = tvec.flatten()
+
+                        # Invert transform
+                        T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
+        
+                        x, y, z = tvec[0], tvec[1], tvec[2]
+                        x, y, z = T_cam_to_wld[:3,3]
+                        text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
                         #print(text)
 
-#                        cv2.putText(
-#                            frame,
-#                            text,
-#                            (20, 40),
-#                            cv2.FONT_HERSHEY_SIMPLEX,
-#                            0.8,
-#                            (0, 255, 0),
-#                            2
-#                        )
+                        cv2.putText(
+                            image_undistorted,
+                            text,
+                            (20, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.8,
+                            (0, 255, 0),
+                            2
+                        )
 
 #            cv2.imshow("Original)", frame)
 #            cv2.waitKey(1)
-#            cv2.imshow("Undistorted Image", image_undistorted)
-#            cv2.waitKey(1)
+            cv2.imshow("Undistorted Image", image_undistorted)
+            cv2.waitKey(1)
 
             if (marker_found and CONNECT_MAVLINK):    
                 R_wld_to_cam, _ = cv2.Rodrigues(rvec)
@@ -566,15 +575,13 @@ def detect_fiducials(
                 
                 p = cam_pos = T_drone_to_wld[:3, 3]
                 q = cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
-
-                mavlink_timestamp = sync.get_autopilot_timestamp(image_capture_time_usec)
             
                 # Calculate actual pipeline latency just for monitoring
                 pipeline_latency_ms = (int(time.monotonic() * 1e6) - image_capture_time_usec) / 1000.0
-                print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
+                print(f"Sending ODOMETRY. Img Time: {image_capture_time_usec} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
                 print("pose:", p)
                 msg = mavutil.mavlink.MAVLink_odometry_message(
-                    mavlink_timestamp,
+                    image_capture_time_usec,
                     mavutil.mavlink.MAV_FRAME_LOCAL_NED,
                     mavutil.mavlink.MAV_FRAME_BODY_FRD,
                     *p,
