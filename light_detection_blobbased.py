@@ -4,17 +4,17 @@ import numpy as np
 from itertools import combinations
 import math
 from scipy.spatial.transform import Rotation as R
-import os
 from scipy.spatial.distance import cdist
+
+import os
+os.environ["MAVLINK20"] = "1"
+os.environ["MAVLINK_DIALECT"] = "common"
 from pymavlink import mavutil
 
 from helpers.utils import scale_camera_matrix, rotate_intrinsics_180
 from helpers.mavlink_utils import get_fc_time_us, wait_cmd_ack, request_message, recv_one, set_global_origin
 from helpers.poseestimation import pose_from_colored_leds, estimate_planar_pose, order_l_shape_markers
 from helpers.led_detection import filter_circles_same_line_similar_radius, cross_ratio_1d   
-
-os.environ["MAVLINK20"] = "1"
-os.environ["MAVLINK_DIALECT"] = "common"
 
 # =========================
 # Input source configuration
@@ -23,9 +23,11 @@ USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 
+cameratype = 'pinhole' # 'fisheye' or 'pinhole'
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
 show_visualization = True
 
+blur_window = (9, 9) # (9, 9) for monochrome global shutter
 exposure_time = 3000 # microseconds
 # L-shape marker setup
 radius_tol=0.5 
@@ -33,7 +35,7 @@ line_tol=8.0
 min_group_size=4 
 cross_ratio_tol=0.025
 reproj_threshold = 10 # default 5
-brightness_threshold = 60
+brightness_threshold = 35 # 60 for monochrome global shutter
 # ArUco setup
 marker_size = 0.1   # meters
 target_id = 0
@@ -42,11 +44,23 @@ detector_params = cv2.aruco.DetectorParameters()
 detector = cv2.aruco.ArucoDetector(aruco_dict, detector_params)
 
 # intrinsics and distortion parameters
+# camera_matrix = np.array(
+ # [[972.41752602,   0.,         719.86748972],
+ # [  0.,         970.82689346, 520.66180438],
+ # [  0.,           0.,           1.        ]])
+# dist_coeffs = np.array([-0.13573729,  0.03353202, -0.0345132,   0.01030255])
+
 camera_matrix = np.array(
- [[972.41752602,   0.,         719.86748972],
- [  0.,         970.82689346, 520.66180438],
- [  0.,           0.,           1.        ]])
-dist_coeffs = np.array([-0.13573729,  0.03353202, -0.0345132,   0.01030255])
+ [[2.36184664e+03, 0.00000000e+00, 7.68344401e+02],
+ [0.00000000e+00, 2.37450698e+03, 5.08886362e+02],
+ [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
+ 
+dist_coeffs = np.array(
+[-2.20055223e-01, -1.12110606e+00, -4.76585431e-03, -8.49651511e-04,
+ -1.26268143e+02,  2.03709304e-01, -1.09829966e-01, -1.41235708e+02,
+  0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  0.00000000e+00,
+  0.00000000e+00,  0.00000000e+00])
+
 
 s=0.6 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
 
@@ -58,7 +72,7 @@ def detect_fiducials(
 
     global camera_matrix
     global dist_coeffs
-	
+    
     if CONNECT_MAVLINK:
         m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
         
@@ -117,7 +131,7 @@ def detect_fiducials(
 
         camera_matrix = scale_camera_matrix(camera_matrix, s)
 
-	# try:
+    # try:
     start_time = time.time()
 
 #    cv2.waitKey(1)
@@ -132,10 +146,10 @@ def detect_fiducials(
        cv2.resizeWindow('Annotated_colors', 700, 700) 
 
     camera_matrix = rotate_intrinsics_180(camera_matrix, s*1456, s*1088) # because frame is rotated below
-		
+        
     while True:
 #        time.sleep(1)
-		# -------------------------
+        # -------------------------
         # Read frame
         # -------------------------
         if USE_VIDEO_FILE:
@@ -154,41 +168,83 @@ def detect_fiducials(
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
 
-        green = frame[:, :, 1] 
+#        green = frame[:, :, 0] 
+        R = frame[:, :, 0]
+        G = frame[:, :, 1]
+
+        green = diff_image_RG = G.astype(np.int16) - R.astype(np.int16)
+
         # -------------------------
         # Undistort frame
         # -------------------------
         h, w = frame.shape[:2]
         
-        new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
-        camera_matrix,
-        dist_coeffs,
-        (w, h),
-        np.eye(3),
-        balance=0.0)
-
-        map1, map2 = cv2.fisheye.initUndistortRectifyMap(
+        if (cameratype == 'fisheye'):
+            new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
             camera_matrix,
             dist_coeffs,
-            np.eye(3),
-            new_K,
             (w, h),
-            cv2.CV_16SC2,
-        )
-        
-        image_undistorted = cv2.remap(
-            frame, map1, map2, interpolation=cv2.INTER_LINEAR)
+            np.eye(3),
+            balance=0.0)
 
-        green_undistorted = cv2.remap(
-           green, map1, map2, interpolation=cv2.INTER_LINEAR)
+            map1, map2 = cv2.fisheye.initUndistortRectifyMap(
+                camera_matrix,
+                dist_coeffs,
+                np.eye(3),
+                new_K,
+                (w, h),
+                cv2.CV_16SC2,
+            )
+            
+            image_undistorted = cv2.remap(
+                frame, map1, map2, interpolation=cv2.INTER_LINEAR)
+
+            green_undistorted = cv2.remap(
+               green, map1, map2, interpolation=cv2.INTER_LINEAR)
+
+        elif (cameratype == 'pinhole'):
+            # Compute new camera matrix
+            new_K, roi = cv2.getOptimalNewCameraMatrix(
+                camera_matrix,
+                dist_coeffs,
+                (w, h),
+                alpha=0.0,      # similar to fisheye balance=0.0
+                newImgSize=(w, h)
+            )
+
+            # Precompute remapping
+            map1, map2 = cv2.initUndistortRectifyMap(
+                camera_matrix,
+                dist_coeffs,
+                R=np.eye(3),
+                newCameraMatrix=new_K,
+                size=(w, h),
+                m1type=cv2.CV_16SC2,
+            )
+
+            # Undistort images
+            image_undistorted = cv2.remap(
+                frame,
+                map1,
+                map2,
+                interpolation=cv2.INTER_LINEAR
+            )
+
+            green_undistorted = cv2.remap(
+                green,
+                map1,
+                map2,
+                interpolation=cv2.INTER_LINEAR
+            )
 
         if (markertype == 'Lshape'):
             print('Searching for LEDs...')
-            blurred = cv2.GaussianBlur(image_undistorted, (9, 9), 0)
+            blurred = cv2.GaussianBlur(image_undistorted, blur_window, 0)
 
             annotated = blurred.copy()
             annotated_colors = blurred.copy()
-            blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
+#            blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
+            blurred = cv2.cvtColor(blurred, cv2.COLOR_RGB2GRAY)
             
             # threshold for top 10%
             brightness_mask = np.percentile(blurred, 90)
@@ -302,7 +358,7 @@ def detect_fiducials(
                 if (show_visualization):
                    led_count = 0
                    for image_point in image_points:    
-         			   # Draw annotation
+                       # Draw annotation
                        center = (int(image_point[0]), int(image_point[1]))
                        #print('center', center)
                        cv2.circle(annotated, center, 10, (0, 255, 0), 2)

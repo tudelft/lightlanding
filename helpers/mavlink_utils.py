@@ -1,5 +1,9 @@
 import time
 import math
+import os
+
+os.environ["MAVLINK20"] = "1"
+os.environ["MAVLINK_DIALECT"] = "common"
 from pymavlink import mavutil
 
 def get_fc_time_us(master):
