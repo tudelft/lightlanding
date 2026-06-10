@@ -154,8 +154,7 @@ def detect_fiducials(
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
 
-        # green = frame  # or frame[:, :, 1] if you want the green channel only
-
+        green = frame[:, :, 1] 
         # -------------------------
         # Undistort frame
         # -------------------------
@@ -180,8 +179,8 @@ def detect_fiducials(
         image_undistorted = cv2.remap(
             frame, map1, map2, interpolation=cv2.INTER_LINEAR)
 
-#        green_undistorted = cv2.remap(
-#            green, map1, map2, interpolation=cv2.INTER_LINEAR  )
+        green_undistorted = cv2.remap(
+           green, map1, map2, interpolation=cv2.INTER_LINEAR)
 
         if (markertype == 'Lshape'):
             print('Searching for LEDs...')
@@ -199,9 +198,6 @@ def detect_fiducials(
 
             avg_top_10_intensities = np.mean(top_pixels)
             # brightness_threshold = avg_top_10_intensities - 10
-
-
-            #green_undistorted = cv2.cvtColor(green_undistorted, cv2.COLOR_BGR2GRAY)
 
             # Threshold bright regions (likely LEDs)
             _, thresh = cv2.threshold(blurred, brightness_threshold, 255, cv2.THRESH_BINARY)
@@ -251,7 +247,7 @@ def detect_fiducials(
                 h, w = annotated_colors.shape[:2]
                 y, x = np.ogrid[:h, :w]
                 inside_circle = (x-center[0])**2 + (y-center[1])**2 <= radius**2
-                led_mean = int(image_undistorted[inside_circle].mean())
+                led_mean = int(green_undistorted[inside_circle].mean())
                 filteredcircles_avgcolor.append(led_mean)
 
             filteredcircles_avgcolor_sorted = np.argsort(filteredcircles_avgcolor)
@@ -265,7 +261,7 @@ def detect_fiducials(
                    h, w = annotated_colors.shape[:2]
                    y, x = np.ogrid[:h, :w]
                    inside_circle = (x-center[0])**2 + (y-center[1])**2 <= radius**2
-                   led_mean = int(image_undistorted[inside_circle].mean())
+                   led_mean = int(green_undistorted[inside_circle].mean())
                    led_type = np.where(filteredcircles_avgcolor_sorted==led_count)[0] <= 3  #first 4 LEDs based on min avg intensity
                    ann_circle_color = (0,255,0) if (led_type==1) else (0,0,255)
                    
