@@ -7,7 +7,7 @@ import threading
 # =========================
 # SAFETY CONFIG
 # =========================
-ENABLE_AUTONOMY = False   # MUST be set True manually
+ENABLE_AUTONOMY = True   # MUST be set True manually
 TAKEOFF_ALT = 3        # meters (keep low for testing)
 MAX_VEL = 0.2             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds
@@ -179,5 +179,7 @@ async def run():
     print("Done safely.")
 
 if __name__ == "__main__":
-    threading.Thread(target=get_pose_from_lights(brightness_threshold=35), daemon=True).start()
+    threading.Thread(target=get_pose_from_lights, 
+    kwargs={"brightness_threshold": 35},
+    daemon=True).start()
     asyncio.run(run())

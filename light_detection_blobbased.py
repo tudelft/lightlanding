@@ -720,7 +720,7 @@ def get_pose_from_lights(
             )
 
         if (markertype == 'Lshape'):
-            print('Searching for LEDs...')
+#            print('Searching for LEDs...')
             blurred = cv2.GaussianBlur(image_undistorted, blur_window, 0)
 
             annotated = blurred.copy()
