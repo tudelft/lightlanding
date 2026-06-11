@@ -64,7 +64,7 @@ dist_coeffs = np.array(
 
 s=0.6 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
 
-def detect_fiducials(
+def detect_lights_sendodometry(
     brightness_threshold,
     min_area: int = 1,
     max_area: int = 40000,
@@ -168,12 +168,14 @@ def detect_fiducials(
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
 
-#        green = frame[:, :, 0] 
-        R = frame[:, :, 0]
-        G = frame[:, :, 1]
+        if (cameratype   == 'pinhole'): # my pinhole camera is RGB
+            R = frame[:, :, 0]
+            G = frame[:, :, 1]
 
-        green = diff_image_RG = G.astype(np.int16) - R.astype(np.int16)
+            green = diff_image_RG = G.astype(np.int16) - R.astype(np.int16)
 
+        elif (cameratype == 'fisheye'): # my fisheye camera is monochrome
+            green = frame
         # -------------------------
         # Undistort frame
         # -------------------------
@@ -385,9 +387,15 @@ def detect_fiducials(
                     x = pose_dict["camera_position"][0]
                     y = pose_dict["camera_position"][1]
                     z = pose_dict["camera_position"][2]
+                    text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}, {pose_dict["reprojection_error"]:.2f}"
+
                     print("Estimated pose:", x, y, z) if (pose_dict["reprojection_error"] < reproj_threshold and pose_dict["positive_depth"]) else print("Pose estimation failed")
 
-                    text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}, {pose_dict["reprojection_error"]:.2f}"
+                    x = pose_dict["marker_position"][0]
+                    y = pose_dict["marker_position"][1]
+                    z = pose_dict["marker_position"][2]
+                    text2 = f"Marker location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}, {pose_dict["reprojection_error"]:.2f}"
+
                     if (show_visualization and pose_dict["reprojection_error"] < reproj_threshold):
                        cv2.putText(
                        annotated,
@@ -398,6 +406,16 @@ def detect_fiducials(
                        (0, 255, 0),
                        2
                        )
+                       cv2.putText(
+                       annotated,
+                       text2,
+                       (20, 80),
+                       cv2.FONT_HERSHEY_SIMPLEX,
+                       0.8,
+                       (0, 0, 255),
+                       2
+                       )
+
                        projected = pose_dict["projected_points"]
                        for p_img, p_proj in zip(image_points, projected):
                            cv2.circle(annotated, tuple(p_img.astype(int)), 10, (0,255,0), -1)
@@ -574,4 +592,4 @@ def detect_fiducials(
     #     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    detect_fiducials(brightness_threshold)
+    detect_lights_sendodometry(brightness_threshold)
