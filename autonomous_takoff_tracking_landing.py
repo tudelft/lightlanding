@@ -2,13 +2,13 @@ import asyncio
 import time
 from mavsdk import System
 from mavsdk.offboard import OffboardError, VelocityNedYaw
-
+from light_detection_blobbased import get_latest_target_location, get_pose_from_lights, run_vision_loop
 # =========================
 # SAFETY CONFIG
 # =========================
 ENABLE_AUTONOMY = False   # MUST be set True manually
-TAKEOFF_ALT = 1.5         # meters (keep low for testing)
-MAX_VEL = 0.3             # m/s safety cap
+TAKEOFF_ALT = 3        # meters (keep low for testing)
+MAX_VEL = 0.2             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds
 TOTAL_TIMEOUT = 60        # seconds max mission time
 
@@ -16,6 +16,7 @@ TOTAL_TIMEOUT = 60        # seconds max mission time
 # FAKE MARKER DETECTOR (replace with your CV)
 # return None if marker lost
 # =========================
+
 def get_marker_offset():
     """
     Replace this with your real CV output:
@@ -24,22 +25,25 @@ def get_marker_offset():
         (x, y, z) in meters (drone frame or NED-consistent frame)
         OR None if not detected
     """
+    p, q = get_latest_target_location()
 
-    # Example simulation: marker oscillates
     t = time.time()
-    x = 1.0 * (0.5)
-    y = 1.0 * (0.2)
-    z = 1.0
+    if (p is not None):
+        x = -1.0 * p[0]
+        y = -1.0 * p[1]
+        z = -1.0 * p[2]
 
-    return (x, y, z)
-
+        return (x, y, z)
+    else:
+        return None
+    
 # =========================
 # MAIN
 # =========================
 async def run():
 
     drone = System()
-    await drone.connect(system_address="udp://:14540")
+    await drone.connect(system_address="serial:///dev/ttyACM0:115200")
 
     print("Connecting...")
 
@@ -91,13 +95,13 @@ async def run():
     last_seen = time.time()
     start_time = time.time()
 
-    kp = 0.4  # simple P controller
+    kpx = 0.2  # simple P controller gains
+    kpy = 0.2
+    kpz = 0.05
 
     try:
         while True:
-
             now = time.time()
-
             # safety timeout
             if now - start_time > TOTAL_TIMEOUT:
                 print("Mission timeout → landing")
@@ -117,11 +121,10 @@ async def run():
                     state = "TRACK"
 
                 if state == "TRACK":
-
                     # velocity control (IMPORTANT: capped)
-                    vx = kp * mx
-                    vy = kp * my
-                    vz = 0.0
+                    vx = kpx * mx
+                    vy = kpy * my
+                    vz = kpz * mz if (abs(mz) >= 2) else 0.0
 
                     vx = max(min(vx, MAX_VEL), -MAX_VEL)
                     vy = max(min(vy, MAX_VEL), -MAX_VEL)
@@ -130,7 +133,7 @@ async def run():
                         VelocityNedYaw(vx, vy, vz, 0.0)
                     )
 
-                    print(f"TRACK vx={vx:.2f} vy={vy:.2f}")
+                    print(f"TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
 
             else:
                 # =========================
@@ -138,7 +141,6 @@ async def run():
                 # =========================
                 if now - last_seen > LOST_MARKER_TIMEOUT:
                     print("Marker lost → HOLD (hover)")
-
                     state = "HOVER"
 
                     await drone.offboard.set_velocity_ned(
@@ -176,4 +178,5 @@ async def run():
     print("Done safely.")
 
 if __name__ == "__main__":
+    run_vision_loop()  # start the vision loop in background
     asyncio.run(run())
