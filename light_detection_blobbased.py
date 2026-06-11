@@ -172,7 +172,7 @@ def detect_lights_sendodometry(
             R = frame[:, :, 0]
             G = frame[:, :, 1]
 
-            green = diff_image_RG = G.astype(np.int16) - R.astype(np.int16)
+            green = diff_image_RG = R.astype(np.int16) - G.astype(np.int16)
 
         elif (cameratype == 'fisheye'): # my fisheye camera is monochrome
             green = frame
@@ -391,11 +391,6 @@ def detect_lights_sendodometry(
 
                     print("Estimated pose:", x, y, z) if (pose_dict["reprojection_error"] < reproj_threshold and pose_dict["positive_depth"]) else print("Pose estimation failed")
 
-                    x = pose_dict["marker_position"][0]
-                    y = pose_dict["marker_position"][1]
-                    z = pose_dict["marker_position"][2]
-                    text2 = f"Marker location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}, {pose_dict["reprojection_error"]:.2f}"
-
                     if (show_visualization and pose_dict["reprojection_error"] < reproj_threshold):
                        cv2.putText(
                        annotated,
@@ -404,15 +399,6 @@ def detect_lights_sendodometry(
                        cv2.FONT_HERSHEY_SIMPLEX,
                        0.8,
                        (0, 255, 0),
-                       2
-                       )
-                       cv2.putText(
-                       annotated,
-                       text2,
-                       (20, 80),
-                       cv2.FONT_HERSHEY_SIMPLEX,
-                       0.8,
-                       (0, 0, 255),
                        2
                        )
 

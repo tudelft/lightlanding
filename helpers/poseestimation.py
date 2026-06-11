@@ -97,11 +97,6 @@ def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new
         cam_pos = T_drone_to_wld[:3, 3]
         cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
 
-        T_wld_to_drone = np.linalg.inv(T_drone_to_wld) # wld is defined in the marker frame, so this is also the transform from marker to drone
-        marker_pos = T_wld_to_drone[:3, 3]
-        marker_orient_quat = R.from_matrix(T_wld_to_drone[:3, :3]).as_quat()  # (x, y, z, w)
-
-
         pose_dict = {
             "success": True,
             "rvec": rvec_best,
@@ -109,8 +104,6 @@ def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new
             "R": R_wld_to_cam,
             "camera_position": cam_pos,
             "camera_orientation": cam_orient_quat,
-            "marker_position": marker_pos,
-            "marker_orientation": marker_orient_quat,
             "reprojection_error": min_reproj_error,
             "projected_points": projected_points_best,
             "positive_depth": positive_depth_best,
