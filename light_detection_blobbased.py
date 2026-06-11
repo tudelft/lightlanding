@@ -979,9 +979,7 @@ def get_pose_from_lights(
             else:
                 latest_target_location = None
                 latest_target_pose = None
-                
-def run_vision_loop():
-    threading.Thread(target=get_pose_from_lights, daemon=True).start()
+
 
 def get_latest_target_location():
     return latest_target_location, latest_target_pose

@@ -2,7 +2,8 @@ import asyncio
 import time
 from mavsdk import System
 from mavsdk.offboard import OffboardError, VelocityNedYaw
-from light_detection_blobbased import get_latest_target_location, get_pose_from_lights, run_vision_loop
+from light_detection_blobbased import get_latest_target_location, get_pose_from_lights
+import threading
 # =========================
 # SAFETY CONFIG
 # =========================
@@ -178,5 +179,5 @@ async def run():
     print("Done safely.")
 
 if __name__ == "__main__":
-    run_vision_loop()  # start the vision loop in background
+    threading.Thread(target=get_pose_from_lights(brightness_threshold=35), daemon=True).start()
     asyncio.run(run())
