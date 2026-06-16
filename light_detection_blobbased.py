@@ -23,23 +23,36 @@ from helpers.led_detection import filter_circles_same_line_similar_radius, cross
 USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
+MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
+
+if (MAVLINK_MULTIPLE_CONNECTIONS):
+    serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
+else:
+    serial_ip = "udpout:127.0.0.1:14600"  # UDP port for MAVLink connection
+
 
 cameratype = 'pinhole' # 'fisheye' or 'pinhole'
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
 show_visualization = True
 
-blur_window = (9, 9) # (9, 9) for monochrome global shutter
-exposure_time = 3000 # microseconds
 # L-shape marker setup
 radius_tol=0.5 
 line_tol=8.0
 min_group_size=4 
 cross_ratio_tol=0.025
-reproj_threshold = 10 # default 5
+
+# Camera setup
+blur_window = (9, 9) # (9, 9) for monochrome global shutter
+exposure_time = 3000 # microseconds
+
+# Pose estimation acceptance criteria
 brightness_threshold = 35 # 60 for monochrome global shutter
+reproj_threshold = 5 # default 5
+
 # ArUco setup
 marker_size = 0.1   # meters
 target_id = 0
+
 aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 detector_params = cv2.aruco.DetectorParameters()
 detector = cv2.aruco.ArucoDetector(aruco_dict, detector_params)
@@ -74,7 +87,7 @@ def detect_lights_sendodometry(
     global dist_coeffs
     
     if CONNECT_MAVLINK:
-        m = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
+        m = mavutil.mavlink_connection(serial_ip, baud=115200)
         
         print("Waiting heartbeat...")
         m.wait_heartbeat()
@@ -94,7 +107,6 @@ def detect_lights_sendodometry(
         LAT_DEG = 51.99042
         LON_DEG = 4.37549
         ALT_M = 5.0   # MSL altitude in meters
-
         
             
     global_tf_set = False 

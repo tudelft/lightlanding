@@ -5,18 +5,23 @@ from mavsdk.offboard import OffboardError, VelocityNedYaw
 from light_detection_blobbased import get_latest_target_location, get_pose_from_lights
 import threading
 # =========================
-# SAFETY CONFIG
+# CONFIG
 # =========================
+MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 ENABLE_AUTONOMY = True   # MUST be set True manually
-TAKEOFF_ALT = 3        # meters (keep low for testing)
+TAKEOFF_ALT = 4.5        # meters (keep low for testing)
 MAX_VEL = 0.2             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds
 TOTAL_TIMEOUT = 60        # seconds max mission time
 
-# =========================
-# FAKE MARKER DETECTOR (replace with your CV)
-# return None if marker lost
-# =========================
+kpx = 0.1  # simple P controller gains
+kpy = 0.1
+kpz = 0.025
+
+if (MAVLINK_MULTIPLE_CONNECTIONS):
+    serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
+else:
+    serial_ip = "udpout:127.0.0.1:14600"  # UDP port for MAVLink connection
 
 def get_marker_offset():
     """
@@ -44,7 +49,7 @@ def get_marker_offset():
 async def run():
 
     drone = System()
-    await drone.connect(system_address="serial:///dev/ttyACM0:115200")
+    await drone.connect(system_address=serial_ip)
 
     print("Connecting...")
 
@@ -96,10 +101,6 @@ async def run():
     last_seen = time.time()
     start_time = time.time()
 
-    kpx = 0.2  # simple P controller gains
-    kpy = 0.2
-    kpz = 0.05
-
     try:
         while True:
             now = time.time()
@@ -141,12 +142,13 @@ async def run():
                 # MARKER LOST → SAFE HOVER
                 # =========================
                 if now - last_seen > LOST_MARKER_TIMEOUT:
-                    print("Marker lost → HOLD (hover)")
-                    state = "HOVER"
-
                     await drone.offboard.set_velocity_ned(
                         VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
                     )
+
+                    print("Marker lost → HOLD (hover)")
+                    state = "HOVER"
+
 
             # =========================
             # LAND STATE
