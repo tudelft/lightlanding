@@ -25,7 +25,7 @@ VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
-if (MAVLINK_MULTIPLE_CONNECTIONS):
+if (not MAVLINK_MULTIPLE_CONNECTIONS):
     serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
 else:
     serial_ip = "udpout:127.0.0.1:14600"  # UDP port for MAVLink connection

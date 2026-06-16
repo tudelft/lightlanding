@@ -9,7 +9,7 @@ import threading
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 ENABLE_AUTONOMY = True   # MUST be set True manually
-TAKEOFF_ALT = 4.5        # meters (keep low for testing)
+TAKEOFF_ALT = 5        # meters (keep low for testing)
 MAX_VEL = 0.2             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds
 TOTAL_TIMEOUT = 60        # seconds max mission time
@@ -18,7 +18,7 @@ kpx = 0.1  # simple P controller gains
 kpy = 0.1
 kpz = 0.025
 
-if (MAVLINK_MULTIPLE_CONNECTIONS):
+if (not MAVLINK_MULTIPLE_CONNECTIONS):
     serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
 else:
     serial_ip = "udpout:127.0.0.1:14600"  # UDP port for MAVLink connection
@@ -126,7 +126,7 @@ async def run():
                     # velocity control (IMPORTANT: capped)
                     vx = kpx * mx
                     vy = kpy * my
-                    vz = kpz * mz if (abs(mz) >= 2) else 0.0
+                    vz = kpz * mz if (abs(mz) >= 3) else 0.0
 
                     vx = max(min(vx, MAX_VEL), -MAX_VEL)
                     vy = max(min(vy, MAX_VEL), -MAX_VEL)
