@@ -1,7 +1,7 @@
 import asyncio
 import time
 from mavsdk import System
-from mavsdk.offboard import OffboardError, VelocityNedYaw
+from mavsdk.offboard import OffboardError, VelocityNedYaw, PositionNedYaw
 from light_detection_blobbased import get_latest_target_location, get_pose_from_lights
 import threading
 # =========================
@@ -10,18 +10,18 @@ import threading
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 ENABLE_AUTONOMY = True   # MUST be set True manually
 TAKEOFF_ALT = 5        # meters (keep low for testing)
-MAX_VEL = 0.2             # m/s safety cap
-LOST_MARKER_TIMEOUT = 1.0 # seconds
+MAX_VEL = 0.25             # m/s safety cap
+LOST_MARKER_TIMEOUT = 2.0 # seconds
 TOTAL_TIMEOUT = 60        # seconds max mission time
 
 kpx = 0.1  # simple P controller gains
 kpy = 0.1
-kpz = 0.025
+kpz = 0.2
 
 if (not MAVLINK_MULTIPLE_CONNECTIONS):
     serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
 else:
-    serial_ip = "udpout:127.0.0.1:14600"  # UDP port for MAVLink connection
+    serial_ip = "udpin://127.0.0.1:14600"  # UDP port for MAVLink connection
 
 def get_marker_offset():
     """
@@ -62,11 +62,29 @@ async def run():
         print("AUTONOMY DISABLED (safety switch)")
         return
 
+    print("-- Sending holding setpoints")
+    for i in range(100):
+        await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, 0.0, 0.0))
+        print("Sending setpoints to PX4 before we can switch to offboard mode")
+        await asyncio.sleep(0.1)
+
+    print("Waiting for health checks...")
+    async for health in drone.telemetry.health():
+          print(health)
+          break
+
     # =========================
     # ARM
     # =========================
     print("Arming...")
     await drone.action.arm()
+
+    try:
+       await drone.action.arm()
+       print("Armed")
+    except ActionError as e:
+       print(f"Arm failed: {e}")
+       return
 
     # =========================
     # TAKEOFF
@@ -75,7 +93,7 @@ async def run():
     await drone.action.set_takeoff_altitude(TAKEOFF_ALT)
     await drone.action.takeoff()
 
-    await asyncio.sleep(5)
+    await asyncio.sleep(20)
 
     # =========================
     # START OFFBOARD (HOVER FIRST)
@@ -126,11 +144,11 @@ async def run():
                     # velocity control (IMPORTANT: capped)
                     vx = kpx * mx
                     vy = kpy * my
-                    vz = kpz * mz if (abs(mz) >= 3) else 0.0
+                    vz = kpz * mz if (abs(mz) >= 2.5) else 0.0
 
                     vx = max(min(vx, MAX_VEL), -MAX_VEL)
                     vy = max(min(vy, MAX_VEL), -MAX_VEL)
-
+                    vz = max(min(vz, MAX_VEL), -MAX_VEL)
                     await drone.offboard.set_velocity_ned(
                         VelocityNedYaw(vx, vy, vz, 0.0)
                     )

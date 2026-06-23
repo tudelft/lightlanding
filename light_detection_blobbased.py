@@ -33,7 +33,7 @@ else:
 
 cameratype = 'pinhole' # 'fisheye' or 'pinhole'
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization = True
+show_visualization = False
 
 # L-shape marker setup
 radius_tol=0.5 
@@ -903,7 +903,8 @@ def get_pose_from_lights(
 
                     cam_to_w_xyz = p = pose_dict["camera_position"]
                     body_to_w_quat = q = pose_dict["camera_orientation"]
-
+                    global latest_target_location
+                    global latest_target_pose
                     if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]):
                         latest_target_location = p
                         latest_target_pose = q
@@ -994,4 +995,6 @@ def get_pose_from_lights(
 
 
 def get_latest_target_location():
+    global latest_target_location
+    global latest_target_pose
     return latest_target_location, latest_target_pose
