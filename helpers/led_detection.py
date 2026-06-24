@@ -110,7 +110,7 @@ def filter_circles_same_line_similar_radius(
                     continue
 
     best_groups = sorted(set(best_groups))
-    print('len(best_groups)', len(best_groups))
+    # print('len(best_groups)', len(best_groups))
 
 #    if (len(best_groups)%4) != 0:
 #        return np.empty((0, 3), dtype=circles.dtype)
