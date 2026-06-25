@@ -34,12 +34,12 @@ else:
 rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
-markertype = 'Lshape'  # 'Lshape' or 'aruco'
+markertype = 'aruco'  # 'Lshape' or 'aruco'
 show_visualization = True
 
 # L-shape marker setup
 radius_tol=0.5 
-line_tol=8.0
+line_tol=5.0
 min_group_size=4 
 cross_ratio_tol=0.025
 
@@ -50,7 +50,7 @@ exposure_time_mono = 6000 # microseconds
 
 # Pose estimation acceptance criteria
 brightness_threshold = 35 # 60 for monochrome global shutter
-reproj_threshold = 5 # default 5
+reproj_threshold = 10 # default 5
 
 # ArUco setup
 marker_size = 0.25   # meters
@@ -67,11 +67,12 @@ camera_matrix_mono = np.array(
  [  0.,           0.,           1.        ]])
 dist_coeffs_mono = np.array([-0.13573729,  0.03353202, -0.0345132,   0.01030255])
 
-camera_matrix_rgb = np.array([[1.14379991e+03, 0.00000000e+00, 7.51796240e+02],
- [0.00000000e+00, 1.14356108e+03, 5.96153850e+02],
+camera_matrix_rgb = np.array(
+ [[1.13322961e+03, 0.00000000e+00, 7.55652264e+02],
+ [0.00000000e+00, 1.13017443e+03, 5.92142625e+02],
  [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
-
-dist_coeffs_rgb = np.array([-0.10804896, -0.01919944,  0.04317254, -0.03344113])
+dist_coeffs_rgb = np.array(
+ [-0.10252984, -0.03910392,  0.08093865, -0.05523455])
 
 # camera_matrix_rgb_perspective = np.array(
 #  [[2.36184664e+03, 0.00000000e+00, 7.68344401e+02],
@@ -483,10 +484,10 @@ def detect_lights_sendodometry(
 
         elif markertype == 'aruco':
             marker_found = False
-            image_undistorted = cv2.cvtColor(image_undistorted, cv2.COLOR_RGB2GRAY)
+            image_undistorted_gray = cv2.cvtColor(image_undistorted, cv2.COLOR_RGB2GRAY)
 
             print('Looking for Aruco')
-            corners, ids, _ = detector.detectMarkers(image_undistorted)
+            corners, ids, _ = detector.detectMarkers(image_undistorted_gray)
             print('Found ids', ids)
             if ids is not None:
                 ids = ids.flatten()
