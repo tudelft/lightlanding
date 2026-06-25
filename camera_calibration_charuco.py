@@ -4,7 +4,7 @@ import numpy as np
 import time
 from pathlib import Path
 
-USE_FISHEYE = False
+USE_FISHEYE = True
 # ============================================================
 # USER SETTINGS
 # ============================================================
@@ -63,7 +63,7 @@ class CameraSource:
 
         try:
             from picamera2 import Picamera2
-            self.picam2 = Picamera2()
+            self.picam2 = Picamera2(0)
             config = self.picam2.create_preview_configuration(
                 main={"size": (1456, 1088), "format": "RGB888"}
             )
