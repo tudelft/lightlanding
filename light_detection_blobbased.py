@@ -23,7 +23,7 @@ from helpers.led_detection import filter_circles_same_line_similar_radius, cross
 USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
-MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
+MAVLINK_MULTIPLE_CONNECTIONS = False  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 if (not MAVLINK_MULTIPLE_CONNECTIONS):
     serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
@@ -35,7 +35,7 @@ rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization = False
+show_visualization = True
 
 # L-shape marker setup
 radius_tol=0.5 
@@ -53,7 +53,7 @@ brightness_threshold = 35 # 60 for monochrome global shutter
 reproj_threshold = 5 # default 5
 
 # ArUco setup
-marker_size = 0.1   # meters
+marker_size = 0.25   # meters
 target_id = 0
 
 aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
@@ -67,11 +67,11 @@ camera_matrix_mono = np.array(
  [  0.,           0.,           1.        ]])
 dist_coeffs_mono = np.array([-0.13573729,  0.03353202, -0.0345132,   0.01030255])
 
-camera_matrix_rgb = [[1.13550249e+03, 0.00000000e+00, 7.54642216e+02], 
+camera_matrix_rgb = np.array([[1.13550249e+03, 0.00000000e+00, 7.54642216e+02], 
                 [0.0, 1.13667357e+03, 6.04457483e+02],
-                [0.0, 0.0, 1.0]]
+                [0.0, 0.0, 1.0]])
  
-dist_coeffs_rgb = [-0.11656952, 0.07496662, -0.24415062, 0.24517206]
+dist_coeffs_rgb = np.array([-0.11656952, 0.07496662, -0.24415062, 0.24517206])
 
 # camera_matrix_rgb_perspective = np.array(
 #  [[2.36184664e+03, 0.00000000e+00, 7.68344401e+02],
@@ -199,10 +199,10 @@ def detect_lights_sendodometry(
 
         frame = cv2.rotate(frame, cv2.ROTATE_180)
 
-        R = frame[:, :, 0]
-        G = frame[:, :, 1]
+        red = frame[:, :, 0]
+        green = frame[:, :, 1]
 
-        green = diff_image_RG = R.astype(np.int16) - G.astype(np.int16)
+        green = diff_image_RG = red.astype(np.int16) - green.astype(np.int16)
 
         # -------------------------
         # Undistort frame
@@ -667,10 +667,10 @@ def get_pose_from_lightmarker(stop_event,
         frame = picam2.capture_array()
         frame = cv2.rotate(frame, cv2.ROTATE_180)
 
-        R = frame[:, :, 0]
-        G = frame[:, :, 1]
+        red = frame[:, :, 0]
+        green = frame[:, :, 1]
 
-        green = diff_image_RG = R.astype(np.int16) - G.astype(np.int16)
+        green = diff_image_RG = red.astype(np.int16) - green.astype(np.int16)
 
         new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
         camera_matrix_rgb,
@@ -909,10 +909,7 @@ def get_pose_from_arucomarker():
         frame = picam2.capture_array()
         frame = cv2.rotate(frame, cv2.ROTATE_180)
 
-        R = frame[:, :, 0]
-        G = frame[:, :, 1]
-
-        green = diff_image_RG = R.astype(np.int16) - G.astype(np.int16)
+        green = frame[:, :, 1]
 
         h, w = frame.shape[:2]        
         new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
