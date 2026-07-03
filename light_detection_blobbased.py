@@ -30,7 +30,6 @@ if (not MAVLINK_MULTIPLE_CONNECTIONS):
 else:
     serial_ip = "udpout:127.0.0.1:14600"  # UDP port for MAVLink connection
 
-
 rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
@@ -45,34 +44,37 @@ cross_ratio_tol=0.025
 
 # Camera setup
 blur_window = (9, 9) # (9, 9) for monochrome global shutter
-exposure_time_rgb = 3000 # microseconds
-exposure_time_mono = 6000 # microseconds
+exposure_time_rgb = 5000 # microseconds
+exposure_time_mono = 20000 # microseconds
 
 # Pose estimation acceptance criteria
 brightness_threshold = 35 # 60 for monochrome global shutter
-reproj_threshold = 10 # default 5
+reproj_threshold = 5 # default 5
 
 # ArUco setup
-marker_size = 0.25   # meters
+marker_size = 0.198   # meters
 target_id = 0
 
 aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 detector_params = cv2.aruco.DetectorParameters()
 detector = cv2.aruco.ArucoDetector(aruco_dict, detector_params)
 
-# intrinsics and distortion parameters
+  
+# intrinsics and distortion parameters (first flight test)
+# computed at full_resolution of mono camera (1456 x 1088)
 camera_matrix_mono = np.array(
  [[972.41752602,   0.,         719.86748972],
  [  0.,         970.82689346, 520.66180438],
  [  0.,           0.,           1.        ]])
 dist_coeffs_mono = np.array([-0.13573729,  0.03353202, -0.0345132,   0.01030255])
 
-camera_matrix_rgb = np.array(
- [[1.13322961e+03, 0.00000000e+00, 7.55652264e+02],
- [0.00000000e+00, 1.13017443e+03, 5.92142625e+02],
+# computed at full_resolution of rgb camera (1945 x 1097)
+camera_matrix_rgb = np.array( [[1.13783006e+03, 0.00000000e+00, 9.99899908e+02],
+ [0.00000000e+00, 1.14071831e+03, 5.99492820e+02],
  [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
 dist_coeffs_rgb = np.array(
- [-0.10252984, -0.03910392,  0.08093865, -0.05523455])
+ [-0.08491671, -0.09462636,  0.1612735,  -0.09637632])
+
 
 # camera_matrix_rgb_perspective = np.array(
 #  [[2.36184664e+03, 0.00000000e+00, 7.68344401e+02],
@@ -100,8 +102,8 @@ def detect_lights_sendodometry(
         dist_coeffs = dist_coeffs_rgb 
 
     elif (markertype == 'aruco'):
-        camera_matrix = camera_matrix_mono
-        dist_coeffs = dist_coeffs_mono
+        camera_matrix = camera_matrix_mono #camera_matrix_mono
+        dist_coeffs = dist_coeffs_mono #dist_coeffs_mono
 
     if CONNECT_MAVLINK:
         m = mavutil.mavlink_connection(serial_ip, baud=115200)
@@ -146,16 +148,18 @@ def detect_lights_sendodometry(
     else:
         from picamera2 import Picamera2
 
-        cam_port = 1 if markertype == 'aruco' else 0  # Use camera port 0 (monochrome global shutter camera) for ArUco, port 1 (RGB camera) for L-shape
-
+        cam_port = 1 if markertype == 'aruco' else 0  # Use camera port 1 (monochrome global shutter camera) for ArUco, port 0 (RGB camera) for L-shape
         picam2 = Picamera2(cam_port)
+
+        full_size = picam2.camera_properties["PixelArraySize"]
         config = picam2.create_video_configuration(
-            main={"size": (int(s*1456), int(s*1088)), "format": "RGB888"},
-            buffer_count=1,
-            queue=False
-        )
+             main={"size": full_size, "format": "RGB888"},
+             buffer_count=1,
+             queue=False)
+             
         picam2.configure(config)
         controls = {
+        "ScalerCrop": (0, 0, *full_size),
         "ExposureTime": exposure_time_rgb if markertype == 'Lshape' else exposure_time_mono,   # microseconds
         "AnalogueGain": 1.0}
         picam2.set_controls(controls)
@@ -177,7 +181,10 @@ def detect_lights_sendodometry(
        cv2.namedWindow("Annotated_colors", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Annotated_colors', 700, 700) 
 
-    camera_matrix = rotate_intrinsics_180(camera_matrix, s*1456, s*1088) # because frame is rotated below
+       cv2.namedWindow("Undistorted Image", cv2.WINDOW_NORMAL)
+       cv2.resizeWindow('Undistorted Image', 700, 700) 
+
+    camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size[0], s*full_size[1]) # because frame is rotated below
         
     while True:
 #        time.sleep(1)
@@ -197,14 +204,16 @@ def detect_lights_sendodometry(
             image_capture_time_usec = int(time.monotonic() * 1e6)
             mavlink_timestamp = image_capture_time_usec + offset_us
             frame = picam2.capture_array()
-
+            
+        height, width  = frame.shape[:2]
+        frame = cv2.resize(frame, (int(s*width), int(s*height)))
         frame = cv2.rotate(frame, cv2.ROTATE_180)
 
         red = frame[:, :, 0]
         green = frame[:, :, 1]
 
         green = diff_image_RG = red.astype(np.int16) - green.astype(np.int16)
-
+        image_undistorted = None
         # -------------------------
         # Undistort frame
         # -------------------------
@@ -216,7 +225,7 @@ def detect_lights_sendodometry(
             dist_coeffs,
             (w, h),
             np.eye(3),
-            balance=0.0)
+            balance=1.0)
 
             map1, map2 = cv2.fisheye.initUndistortRectifyMap(
                 camera_matrix,
@@ -239,7 +248,7 @@ def detect_lights_sendodometry(
                 camera_matrix,
                 dist_coeffs,
                 (w, h),
-                alpha=0.0,      # similar to fisheye balance=0.0
+                alpha=0.5,      # similar to fisheye balance=0.0
                 newImgSize=(w, h)
             )
 
@@ -372,6 +381,7 @@ def detect_lights_sendodometry(
                ## Show images
                cv2.imshow("Thresholded", thresh)
                cv2.imshow("Annotated_colors", annotated_colors)
+               cv2.imshow("Undistorted Image", image_undistorted)
                cv2.waitKey(1)
 
     #        if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -515,26 +525,7 @@ def detect_lights_sendodometry(
 
                         # Invert transform
                         T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
-        
-                        x, y, z = tvec[0], tvec[1], tvec[2]
-                        x, y, z = T_cam_to_wld[:3,3]
-                        text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
-                        #print(text)
-
-                        cv2.putText(
-                            image_undistorted,
-                            text,
-                            (20, 40),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.8,
-                            (0, 255, 0),
-                            2
-                        )
-
-#            cv2.imshow("Original)", frame)
-#            cv2.waitKey(1)
-            cv2.imshow("Undistorted Image", image_undistorted)
-            cv2.waitKey(1)
+                        #x, y, z = tvec[0], tvec[1], tvec[2]
 
             if (marker_found and CONNECT_MAVLINK):    
                 R_wld_to_cam, _ = cv2.Rodrigues(rvec)
@@ -554,7 +545,24 @@ def detect_lights_sendodometry(
 
                 #T_drone_to_wld = T_cam_to_wld 
                 T_drone_to_wld = T_cam_to_frd @ T_cam_to_wld
-                
+                x, y, z = T_drone_to_wld[:3,3]
+                text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+                #print(text)
+                cv2.putText(
+                    image_undistorted,
+                    text,
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 255, 0),
+                    2
+                )
+
+#            cv2.imshow("Original)", frame)
+#            cv2.waitKey(1)
+                cv2.imshow("Undistorted Image", image_undistorted)
+                cv2.waitKey(1)
+
                 p = cam_pos = T_drone_to_wld[:3, 3]
                 q = cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
             

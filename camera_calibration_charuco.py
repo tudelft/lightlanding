@@ -64,11 +64,20 @@ class CameraSource:
         try:
             from picamera2 import Picamera2
             self.picam2 = Picamera2(0)
-            config = self.picam2.create_preview_configuration(
-                main={"size": (1456, 1088), "format": "RGB888"}
-            )
+
+            full_size = self.picam2.camera_properties["PixelArraySize"]
+            config = self.picam2.create_video_configuration(
+            main={"size":  full_size, "format": "RGB888"},
+            buffer_count=1,
+            queue=False)
+             
             self.picam2.configure(config)
+            controls = {
+            "ScalerCrop": (0, 0, *full_size),
+            "AnalogueGain": 1.0}
+            self.picam2.set_controls(controls)
             self.picam2.start()
+
             time.sleep(1.0)
             self.use_picamera2 = True
             print("Using Picamera2")
@@ -294,7 +303,7 @@ def main():
                 else:
                     print("Running perspective calibration...")
             
-                    flags = cv2.CALIB_RATIONAL_MODEL
+                    flags = None #cv2.CALIB_RATIONAL_MODEL
             
                     rms, camera_matrix, dist_coeffs, rvecs, tvecs = (
                         cv2.calibrateCamera(
