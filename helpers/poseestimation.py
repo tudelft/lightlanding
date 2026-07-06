@@ -25,7 +25,7 @@ def get_endpoints_of_a_noisy_line(points):
 
     return end1, end2
 
-def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, dist_coeffs):
+def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, dist_coeffs, drone_attitude_reliable = False, rot_drone_to_ned = None):
     green_arm = fitered_circles[filteredcircles_avgcolor_sorted[:4]] #first 4 LEDs based on min avg intensity
     amber_arm = fitered_circles[filteredcircles_avgcolor_sorted[4:]]  #other 4 LEDs based on min avg intensity
     
@@ -75,27 +75,48 @@ def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new
             positive_depth_best = positive_depth
 
     if image_points_best_config is not None:
-        R_wld_to_cam, _ = cv2.Rodrigues(rvec_best)
-        #print('tvec', tvec)
-        T_wld_to_cam = np.eye(4)
-        T_wld_to_cam[:3, :3] = R_wld_to_cam
-        T_wld_to_cam[:3, 3] = tvec_best.flatten()
+        cam_pos = None
+        cam_orient_quat = None
+        trans_marker_to_ned = None
+        if (drone_attitude_reliable):
+            trans_marker_to_ned = None
+            # if the attitude of the drone is reliable then we just estimate translation and rotation of the marker in the drone's inertial/world/NED frame, to avoid errors coming for planar pose ambiguity
+            R_wld_to_cam, _ = cv2.Rodrigues(rvec_best)
 
-        # Invert transform
-        T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
+            T_wld_to_cam = np.eye(4)
+            trans_marker_to_cam = tvec_best.flatten()
+            rot_cam_to_drone = np.array([
+                [ 0, -1,  0],
+                [ 1,  0,  0],
+                [ 0,  0,  1],
+            ])
+            
+            trans_marker_to_drone = rot_cam_to_drone @ trans_marker_to_cam # + trans_cam_to_drone
+            trans_marker_to_ned = rot_drone_to_ned @ trans_marker_to_drone # + trans_drone_to_ned
 
-        T_cam_to_drone = np.array([
-            [ 0, -1,  0, 0],
-            [ 1,  0,  0, 0],
-            [ 0,  0,  1, 0],
-            [ 0,  0,  0, 1],
-        ])
+        elif (not drone_attitude_reliable):
+            # if the attitude of the drone is not reliable then we have to estimate the 6-DoF pose of the drone w.r.t marker, which in case of planar ambiguity can be noisy and in case of 3D marker will be more robust
+            
+            R_wld_to_cam, _ = cv2.Rodrigues(rvec_best)
+            T_wld_to_cam = np.eye(4)
+            T_wld_to_cam[:3, :3] = R_wld_to_cam
+            T_wld_to_cam[:3, 3] = tvec_best.flatten()
 
-        #T_drone_to_wld = T_cam_to_wld 
-        T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
+            # Invert transform
+            T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
 
-        cam_pos = T_drone_to_wld[:3, 3]
-        cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
+            T_cam_to_drone = np.array([
+                [ 0, -1,  0, 0],
+                [ 1,  0,  0, 0],
+                [ 0,  0,  1, 0],
+                [ 0,  0,  0, 1],
+            ])
+
+            #T_drone_to_wld = T_cam_to_wld 
+            T_drone_to_wld = T_cam_to_wld @ np.linalg.inv(T_cam_to_drone)
+
+            cam_pos = T_drone_to_wld[:3, 3]
+            cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
 
         pose_dict = {
             "success": True,
@@ -104,6 +125,7 @@ def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new
             "R": R_wld_to_cam,
             "camera_position": cam_pos,
             "camera_orientation": cam_orient_quat,
+            "marker_position": trans_marker_to_ned,
             "reprojection_error": min_reproj_error,
             "projected_points": projected_points_best,
             "positive_depth": positive_depth_best,

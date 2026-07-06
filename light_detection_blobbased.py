@@ -25,6 +25,7 @@ VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 MAVLINK_MULTIPLE_CONNECTIONS = False  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
+
 if (not MAVLINK_MULTIPLE_CONNECTIONS):
     serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
 else:
@@ -35,6 +36,7 @@ mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 markertype = 'aruco'  # 'Lshape' or 'aruco'
 show_visualization = True
+drone_attitude_reliable = False
 
 # L-shape marker setup
 radius_tol=0.5 
@@ -89,6 +91,26 @@ dist_coeffs_rgb = np.array(
 
 s=0.6 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
 
+def get_drone_attitude(master):  
+    msg = master.recv_match(
+        type="ATTITUDE_QUATERNION",
+        blocking=True,
+        timeout=2.0
+    )
+    if msg is None:
+        print("Timed out waiting for ATTITUDE_QUATERNION")
+    else:
+        print(msg.q1, msg.q2, msg.q3, msg.q4)
+    
+    rot_drone_to_ned = R.from_quat([
+        msg.q2,  # x
+        msg.q3,  # y
+        msg.q4,  # z
+        msg.q1   # w
+    ]).as_matrix()
+
+    return rot_drone_to_ned
+    
 def detect_lights_sendodometry(
     brightness_threshold,
     min_area: int = 1,
@@ -104,7 +126,7 @@ def detect_lights_sendodometry(
     elif (markertype == 'aruco'):
         camera_matrix = camera_matrix_mono #camera_matrix_mono
         dist_coeffs = dist_coeffs_mono #dist_coeffs_mono
-
+        
     if CONNECT_MAVLINK:
         m = mavutil.mavlink_connection(serial_ip, baud=115200)
         
@@ -183,8 +205,8 @@ def detect_lights_sendodometry(
 
        cv2.namedWindow("Undistorted Image", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Undistorted Image', 700, 700) 
-
-    camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size[0], s*full_size[1]) # because frame is rotated below
+    if (markertype == 'aruco'): # the mono camera is 180 degrees titled
+        camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size[0], s*full_size[1]) # because frame is rotated below
         
     while True:
 #        time.sleep(1)
@@ -207,7 +229,9 @@ def detect_lights_sendodometry(
             
         height, width  = frame.shape[:2]
         frame = cv2.resize(frame, (int(s*width), int(s*height)))
-        frame = cv2.rotate(frame, cv2.ROTATE_180)
+        if (markertype == 'aruco'): # the mono camera is 180 degrees titled
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
+        rot_drone_to_ned = get_drone_attitude(m)
 
         red = frame[:, :, 0]
         green = frame[:, :, 1]
@@ -391,7 +415,7 @@ def detect_lights_sendodometry(
             # print(len(fitered_circles), "circles after line/radius filtering")
             if (len(fitered_circles) == 8):
                 # print("Attempting pose estimation with", len(fitered_circles), "circles...")
-                image_points, object_points, pose_dict = pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, np.zeros((1, 4)))
+                image_points, object_points, pose_dict = pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, np.zeros((1, 4)), drone_attitude_reliable, rot_drone_to_ned)
 
                 #image_points, object_points, info = order_l_shape_markers(fitered_circles)
                 # print("2D-3D correspondences:", len(image_points), len(object_points))
@@ -415,7 +439,7 @@ def detect_lights_sendodometry(
                        )
                        led_count += 1
 
-#                cv2.imshow("Annotated", annotated)              
+                cv2.imshow("Annotated", annotated)              
 #                print(f"Detected LEDs: {led_count}")
 
                 if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
@@ -423,11 +447,24 @@ def detect_lights_sendodometry(
                     # print('Reprojection error:', pose_dict["reprojection_error"])
                     print('Reprojection error:', pose_dict["reprojection_error"])
                     print('Positive depth', pose_dict["positive_depth"])
-                    x = pose_dict["camera_position"][0]
-                    y = pose_dict["camera_position"][1]
-                    z = pose_dict["camera_position"][2]
-                    text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}, {pose_dict["reprojection_error"]:.2f}"
+                    if (drone_attitude_reliable):
+                        x = pose_dict["marker_position"][0]
+                        y = pose_dict["marker_position"][1]
+                        z = pose_dict["marker_position"][2]
 
+                        cam_to_w_xyz = p = pose_dict["marker_position"]
+                        body_to_w_quat = q = [float('nan'), float('nan'), float('nan'), float('nan')]
+
+                    elif (not drone_attitude_reliable):
+                        x = pose_dict["camera_position"][0]
+                        y = pose_dict["camera_position"][1]
+                        z = pose_dict["camera_position"][2]
+                        
+                        cam_to_w_xyz = p = pose_dict["camera_position"]
+                        body_to_w_quat = q = pose_dict["camera_orientation"]
+                        
+
+                    text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}, {pose_dict["reprojection_error"]:.2f}"
                     print("Estimated pose:", x, y, z) if (pose_dict["reprojection_error"] < reproj_threshold and pose_dict["positive_depth"]) else print("Pose estimation failed")
 
                     if (show_visualization and pose_dict["reprojection_error"] < reproj_threshold):
@@ -451,16 +488,14 @@ def detect_lights_sendodometry(
                                (255,0,0), 5)
                        cv2.imshow("Annotated", annotated)              
                        cv2.waitKey(1)
-
-
-                    cam_to_w_xyz = p = pose_dict["camera_position"]
-                    body_to_w_quat = q = pose_dict["camera_orientation"]
+                    print('p', p)
+                    print('q', q)
 
                     if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"] and CONNECT_MAVLINK):
                         # Calculate actual pipeline latency just for monitoring
                         pipeline_latency_ms = (int(time.monotonic() * 1e6) - image_capture_time_usec) / 1000.0
                         print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
-                        
+     
                         msg = mavutil.mavlink.MAVLink_odometry_message(
                             mavlink_timestamp,
                             mavutil.mavlink.MAV_FRAME_LOCAL_NED,
@@ -491,7 +526,6 @@ def detect_lights_sendodometry(
                         
                         m.mav.send(msg)
 
-
         elif markertype == 'aruco':
             marker_found = False
             image_undistorted_gray = cv2.cvtColor(image_undistorted, cv2.COLOR_RGB2GRAY)
@@ -518,35 +552,49 @@ def detect_lights_sendodometry(
 
                         cv2.drawFrameAxes(image_undistorted, new_K, np.zeros(4), rvec, tvec, 0.05)
 
-                        R_wld_to_cam, _ = cv2.Rodrigues(rvec)
-                        T_wld_to_cam = np.eye(4)
-                        T_wld_to_cam[:3, :3] = R_wld_to_cam
-                        T_wld_to_cam[:3, 3] = tvec.flatten()
-
-                        # Invert transform
-                        T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
-                        #x, y, z = tvec[0], tvec[1], tvec[2]
-
             if (marker_found and CONNECT_MAVLINK):    
-                R_wld_to_cam, _ = cv2.Rodrigues(rvec)
-                #print('tvec', tvec)
-                T_wld_to_cam = np.eye(4)
-                T_wld_to_cam[:3, :3] = R_wld_to_cam
-                T_wld_to_cam[:3, 3] = tvec.flatten()
+                if (drone_attitude_reliable):
+                    R_wld_to_cam, _ = cv2.Rodrigues(rvec)
+                    T_wld_to_cam = np.eye(4)
+                    trans_marker_to_cam = tvec.flatten()
+                    rot_cam_to_drone = np.array([
+                        [ 0, -1,  0],
+                        [ 1,  0,  0],
+                        [ 0,  0,  1],
+                    ])
+            
+                    trans_marker_to_drone = rot_cam_to_drone @ trans_marker_to_cam # + trans_cam_to_drone
+                    trans_marker_to_ned = rot_drone_to_ned @ trans_marker_to_drone # + trans_drone_to_ned
 
-                # Invert transform
-                T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
-                T_cam_to_frd = np.array([
-                  [0,  1, 0, 0],
-                  [1,  0, 0, 0],
-                  [0, 0, -1, 0],
-                  [0,  0, 0, 1],
-                ], dtype=float)
+                    x, y, z = trans_marker_to_ned
+                    text = f"ID {marker_id} MarkerLoc X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+                    
+                    cam_pos = p = trans_marker_to_ned
+                    cam_orient_quat = q = [float('nan'), float('nan'), float('nan'), float('nan')]
+                    
+                else:
+                    R_wld_to_cam, _ = cv2.Rodrigues(rvec)
+                    #print('tvec', tvec)
+                    T_wld_to_cam = np.eye(4)
+                    T_wld_to_cam[:3, :3] = R_wld_to_cam
+                    T_wld_to_cam[:3, 3] = tvec.flatten()
 
-                #T_drone_to_wld = T_cam_to_wld 
-                T_drone_to_wld = T_cam_to_frd @ T_cam_to_wld
-                x, y, z = T_drone_to_wld[:3,3]
-                text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+                    # Invert transform
+                    T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
+                    basis_change = np.array([
+                      [0,  1, 0, 0],
+                      [1,  0, 0, 0],
+                      [0, 0, -1, 0],
+                      [0,  0, 0, 1],
+                    ], dtype=float)
+
+                    #T_drone_to_wld = T_cam_to_wld 
+                    T_drone_to_wld = basis_change @ T_cam_to_wld
+                    x, y, z = T_drone_to_wld[:3,3]
+                    
+                    cam_pos = p = T_drone_to_wld[:3,3]
+                    cam_orient_quat = q =  R.from_matrix(T_drone_to_wld[:3, :3]).as_quat() 
+                    text = f"ID {marker_id} DroneLoc X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
                 #print(text)
                 cv2.putText(
                     image_undistorted,
@@ -562,9 +610,6 @@ def detect_lights_sendodometry(
 #            cv2.waitKey(1)
                 cv2.imshow("Undistorted Image", image_undistorted)
                 cv2.waitKey(1)
-
-                p = cam_pos = T_drone_to_wld[:3, 3]
-                q = cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
             
                 # Calculate actual pipeline latency just for monitoring
                 pipeline_latency_ms = (int(time.monotonic() * 1e6) - image_capture_time_usec) / 1000.0
