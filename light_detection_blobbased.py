@@ -6,6 +6,7 @@ from itertools import combinations
 import math
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.distance import cdist
+import asyncio
 
 import os
 os.environ["MAVLINK20"] = "1"
@@ -24,7 +25,6 @@ USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 MAVLINK_MULTIPLE_CONNECTIONS = False  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
-
 
 if (not MAVLINK_MULTIPLE_CONNECTIONS):
     serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
@@ -60,7 +60,6 @@ target_id = 0
 aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 detector_params = cv2.aruco.DetectorParameters()
 detector = cv2.aruco.ArucoDetector(aruco_dict, detector_params)
-
   
 # intrinsics and distortion parameters (first flight test)
 # computed at full_resolution of mono camera (1456 x 1088)
@@ -91,7 +90,22 @@ dist_coeffs_rgb = np.array(
 
 s=0.6 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
 
-def get_drone_attitude(master):  
+async def get_drone_attitude_mavsdk_async(drone):
+    async for attitude in drone.telemetry.attitude_quaternion():
+        rot_drone_to_ned = R.from_quat([
+            attitude.x,  # x
+            attitude.y,  # y
+            attitude.z,  # z
+            attitude.w   # w
+        ]).as_matrix()
+
+        return rot_drone_to_ned
+
+def get_drone_attitude_mavsdk(drone):
+    R_drone_to_ned = asyncio.run(get_drone_attitude_mavsdk_async(drone))
+    return R_drone_to_ned
+
+def get_drone_attitude_mavlink(master):  
     msg = master.recv_match(
         type="ATTITUDE_QUATERNION",
         blocking=True,
@@ -205,6 +219,7 @@ def detect_lights_sendodometry(
 
        cv2.namedWindow("Undistorted Image", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Undistorted Image', 700, 700) 
+
     if (markertype == 'aruco'): # the mono camera is 180 degrees titled
         camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size[0], s*full_size[1]) # because frame is rotated below
         
@@ -227,11 +242,12 @@ def detect_lights_sendodometry(
             mavlink_timestamp = image_capture_time_usec + offset_us
             frame = picam2.capture_array()
             
+        rot_drone_to_ned = get_drone_attitude_mavlink(m)
+
         height, width  = frame.shape[:2]
         frame = cv2.resize(frame, (int(s*width), int(s*height)))
         if (markertype == 'aruco'): # the mono camera is 180 degrees titled
             frame = cv2.rotate(frame, cv2.ROTATE_180)
-        rot_drone_to_ned = get_drone_attitude(m)
 
         red = frame[:, :, 0]
         green = frame[:, :, 1]
@@ -595,7 +611,7 @@ def detect_lights_sendodometry(
                     cam_pos = p = T_drone_to_wld[:3,3]
                     cam_orient_quat = q =  R.from_matrix(T_drone_to_wld[:3, :3]).as_quat() 
                     text = f"ID {marker_id} DroneLoc X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
-                #print(text)
+
                 cv2.putText(
                     image_undistorted,
                     text,
@@ -665,36 +681,45 @@ if __name__ == "__main__":
     detect_lights_sendodometry(brightness_threshold)
 
 latest_lighttarget_location = None
-latest_lighttarget_pose = None
-latest_arucotarget_location = None
-latest_arucotarget_pose = None
+latest_lighttarget_orientation = None
+latest_dronelocation_withlighttarget = None
+latest_droneorientation_withlighttarget = None
 
-def get_pose_from_lightmarker(stop_event,
+latest_arucotarget_location = None
+latest_arucotarget_orientation = None
+latest_dronelocation_witharucotarget = None
+latest_droneorientation_witharucotarget = None
+
+def get_pose_from_lightmarker(stop_event, pose_type, drone,
     brightness_threshold,
     min_area: int = 1,
     max_area: int = 40000):
     # This function is similar to detect_lights_sendodometry but only returns the estimated pose without any MAVLink communication or visualization. It can be used for unit testing the pose estimation logic in isolation.
 
     global camera_matrix_rgb, dist_coeffs_rgb
+    camera_matrix = camera_matrix_rgb.copy()
+    dist_coeffs = dist_coeffs_rgb.copy()
 
     picam2 = None
     cap = None
 
     from picamera2 import Picamera2
-    picam2 = Picamera2(0)
+    picam2 = Picamera2(0)  # Use camera port 0 (RGB camera) for L-shape
+    full_size = picam2.camera_properties["PixelArraySize"]
     config = picam2.create_video_configuration(
-        main={"size": (int(s*1456), int(s*1088)), "format": "RGB888"},
-        buffer_count=1,
-        queue=False
-    )
+            main={"size": full_size, "format": "RGB888"},
+            buffer_count=1,
+            queue=False)
+            
     picam2.configure(config)
     controls = {
+    "ScalerCrop": (0, 0, *full_size),
     "ExposureTime": exposure_time_rgb,   # microseconds
     "AnalogueGain": 1.0}
     picam2.set_controls(controls)
     picam2.start()
 
-    camera_matrix_rgb = scale_camera_matrix(camera_matrix_rgb, s)
+    camera_matrix = scale_camera_matrix(camera_matrix, s)
 
     if (show_visualization):
        cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
@@ -706,7 +731,7 @@ def get_pose_from_lightmarker(stop_event,
        cv2.namedWindow("Annotated_colors", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Annotated_colors', 700, 700) 
 
-    camera_matrix_rgb = rotate_intrinsics_180(camera_matrix_rgb, s*1456, s*1088) # because frame is rotated below
+    #camera_matrix = rotate_intrinsics_180(camera_matrix, s*1456, s*1088) # rotation was needed for mono camera, but not for rgb camera
         
     while not stop_event.is_set():
     # while True:
@@ -719,7 +744,10 @@ def get_pose_from_lightmarker(stop_event,
         image_capture_time_usec = int(time.monotonic() * 1e6)
         mavlink_timestamp = image_capture_time_usec
         frame = picam2.capture_array()
-        frame = cv2.rotate(frame, cv2.ROTATE_180)
+        rot_drone_to_ned = get_drone_attitude_mavsdk(drone)
+        height, width  = frame.shape[:2]
+        frame = cv2.resize(frame, (int(s*width), int(s*height)))
+#        frame = cv2.rotate(frame, cv2.ROTATE_180) # rotation was needed for mono camera, but not for rgb camera
 
         red = frame[:, :, 0]
         green = frame[:, :, 1]
@@ -727,15 +755,15 @@ def get_pose_from_lightmarker(stop_event,
         green = diff_image_RG = red.astype(np.int16) - green.astype(np.int16)
 
         new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
-        camera_matrix_rgb,
-        dist_coeffs_rgb,
+        camera_matrix,
+        dist_coeffs,
         (w, h),
         np.eye(3),
         balance=0.0)
 
         map1, map2 = cv2.fisheye.initUndistortRectifyMap(
-            camera_matrix_rgb,
-            dist_coeffs_rgb,
+            camera_matrix,
+            dist_coeffs,
             np.eye(3),
             new_K,
             (w, h),
@@ -748,13 +776,10 @@ def get_pose_from_lightmarker(stop_event,
         green_undistorted = cv2.remap(
             green, map1, map2, interpolation=cv2.INTER_LINEAR)
 
-
 #            print('Searching for LEDs...')
         blurred = cv2.GaussianBlur(image_undistorted, blur_window, 0)
-
         annotated = blurred.copy()
         annotated_colors = blurred.copy()
-#            blurred = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
         blurred = cv2.cvtColor(blurred, cv2.COLOR_RGB2GRAY)
         
         # threshold for top 10%
@@ -857,8 +882,12 @@ def get_pose_from_lightmarker(stop_event,
 
         # print(len(fitered_circles), "circles after line/radius filtering")
         if (len(fitered_circles) == 8):
-            # print("Attempting pose estimation with", len(fitered_circles), "circles...")
-            image_points, object_points, pose_dict = pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, np.zeros((1, 4)))
+            if (pose_type == 'target'):
+                drone_attitude_reliable = True # if we are just trying to estimate the location of the light marker, we can use the drone's attitude to help with pose estimation
+            elif (pose_type == 'drone'):
+                drone_attitude_reliable = False # if the drone's attitude is not reliable, we can still estimate the drone's pose relative to the light marker using the LEDs but it suffers from planar ambiguity
+
+            image_points, object_points, pose_dict = pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, np.zeros((1, 4)),  drone_attitude_reliable,  rot_drone_to_ned)
 
             if (show_visualization):
                 led_count = 0
@@ -887,11 +916,24 @@ def get_pose_from_lightmarker(stop_event,
                 # print('Reprojection error:', pose_dict["reprojection_error"])
                 print('Reprojection error:', pose_dict["reprojection_error"])
                 print('Positive depth', pose_dict["positive_depth"])
-                x = pose_dict["camera_position"][0]
-                y = pose_dict["camera_position"][1]
-                z = pose_dict["camera_position"][2]
-                text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}, {pose_dict["reprojection_error"]:.2f}"
 
+                if (drone_attitude_reliable):
+                    x = pose_dict["marker_position"][0]
+                    y = pose_dict["marker_position"][1]
+                    z = pose_dict["marker_position"][2]
+
+                    cam_to_w_xyz = p = pose_dict["marker_position"]
+                    body_to_w_quat = q = [float('nan'), float('nan'), float('nan'), float('nan')]
+
+                elif (not drone_attitude_reliable):
+                    x = pose_dict["camera_position"][0]
+                    y = pose_dict["camera_position"][1]
+                    z = pose_dict["camera_position"][2]
+                    
+                    cam_to_w_xyz = p = pose_dict["camera_position"]
+                    body_to_w_quat = q = pose_dict["camera_orientation"]
+
+                text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}, {pose_dict["reprojection_error"]:.2f}"
                 print("Estimated pose:", x, y, z) if (pose_dict["reprojection_error"] < reproj_threshold and pose_dict["positive_depth"]) else print("Pose estimation failed")
 
                 if (show_visualization and pose_dict["reprojection_error"] < reproj_threshold):
@@ -916,40 +958,52 @@ def get_pose_from_lightmarker(stop_event,
                     cv2.imshow("Annotated", annotated)              
                     cv2.waitKey(1)
 
-                cam_to_w_xyz = p = pose_dict["camera_position"]
-                body_to_w_quat = q = pose_dict["camera_orientation"]
                 global latest_lighttarget_location
-                global latest_lighttarget_pose
-                if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]):
-                    latest_lighttarget_location = p
-                    latest_lighttarget_pose = q
-                else:
-                    latest_lighttarget_location = None
-                    latest_lighttarget_pose = None
+                global latest_lighttarget_orientation
+                global latest_dronelocation_withlighttarget
+                global latest_droneorientation_withlighttarget
 
-def get_pose_from_arucomarker():
+                if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]):
+                    if (pose_type == 'target'):
+                        latest_lighttarget_location = p
+                        latest_lighttarget_orientation = q
+                        # latest_dronelocation_withlighttarget = None
+                        # latest_droneorientation_withlighttarget = None
+
+                    elif (pose_type == 'drone'):
+                        latest_dronelocation_withlighttarget = p
+                        latest_droneorientation_withlighttarget = q
+                        # latest_lighttarget_location = None
+                        # latest_lighttarget_orientation = None
+
+def get_pose_from_arucomarker(pose_type, drone):
     global camera_matrix_mono
     global dist_coeffs_mono
     
+    camera_matrix = camera_matrix_mono.copy()
+    dist_coeffs = dist_coeffs_mono.copy()
+
     picam2 = None
     cap = None
 
     from picamera2 import Picamera2
-    picam2 = Picamera2(1)
+    picam2 = Picamera2(1)  # Use camera port 1 (monochrome camera) for aruco
+    full_size = picam2.camera_properties["PixelArraySize"]
     config = picam2.create_video_configuration(
-        main={"size": (int(s*1456), int(s*1088)), "format": "RGB888"},
-        buffer_count=1,
-        queue=False
-    )
+            main={"size": full_size, "format": "RGB888"},
+            buffer_count=1,
+            queue=False)
+            
     picam2.configure(config)
     controls = {
+    "ScalerCrop": (0, 0, *full_size),
     "ExposureTime": exposure_time_mono,   # microseconds
     "AnalogueGain": 1.0}
     picam2.set_controls(controls)
     picam2.start()
 
-    camera_matrix_mono = scale_camera_matrix(camera_matrix_mono, s)
-    camera_matrix_mono = rotate_intrinsics_180(camera_matrix_mono, s*1456, s*1088) # because frame is rotated below
+    camera_matrix = scale_camera_matrix(camera_matrix, s) # resizing the image below
+    camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size[0], s*full_size[1]) # because frame is rotated below
         
     while True:
 #        time.sleep(1)
@@ -961,21 +1015,23 @@ def get_pose_from_arucomarker():
         image_capture_time_usec = int(time.monotonic() * 1e6)
         mavlink_timestamp = image_capture_time_usec
         frame = picam2.capture_array()
+        rot_drone_to_ned = get_drone_attitude_mavsdk(drone)
+        height, width  = frame.shape[:2]
+        frame = cv2.resize(frame, (int(s*width), int(s*height)))
         frame = cv2.rotate(frame, cv2.ROTATE_180)
-
         green = frame[:, :, 1]
 
         h, w = frame.shape[:2]        
         new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
-        camera_matrix_mono,
-        dist_coeffs_mono,
+        camera_matrix,
+        dist_coeffs,
         (w, h),
         np.eye(3),
         balance=0.0)
 
         map1, map2 = cv2.fisheye.initUndistortRectifyMap(
-            camera_matrix_mono,
-            dist_coeffs_mono,
+            camera_matrix,
+            dist_coeffs,
             np.eye(3),
             new_K,
             (w, h),
@@ -1013,70 +1069,83 @@ def get_pose_from_arucomarker():
                     if (show_visualization):
                         cv2.drawFrameAxes(image_undistorted, new_K, np.zeros(4), rvec, tvec, 0.05)
 
-                    R_wld_to_cam, _ = cv2.Rodrigues(rvec)
-                    T_wld_to_cam = np.eye(4)
-                    T_wld_to_cam[:3, :3] = R_wld_to_cam
-                    T_wld_to_cam[:3, 3] = tvec.flatten()
-
-                    # Invert transform
-                    T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
-    
-                    x, y, z = tvec[0], tvec[1], tvec[2]
-                    x, y, z = T_cam_to_wld[:3,3]
-                    text = f"ID {marker_id} X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
-                    #print(text)
-                    if (show_visualization):
-                        cv2.putText(
-                            image_undistorted,
-                            text,
-                            (20, 40),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.8,
-                            (0, 255, 0),
-                            2
-                        )
-
 #            cv2.imshow("Original)", frame)
 #            cv2.waitKey(1)
             if (show_visualization):
                 cv2.imshow("Undistorted Image", image_undistorted)
                 cv2.waitKey(1)
 
-        if (aruco_marker_found):    
-            R_wld_to_cam, _ = cv2.Rodrigues(rvec)
-            #print('tvec', tvec)
-            T_wld_to_cam = np.eye(4)
-            T_wld_to_cam[:3, :3] = R_wld_to_cam
-            T_wld_to_cam[:3, 3] = tvec.flatten()
+            if (aruco_marker_found):    
+                global latest_arucotarget_location
+                global latest_arucotarget_orientation
+                global latest_dronelocation_witharucotarget 
+                global latest_droneorientation_witharucotarget
 
-            # Invert transform
-            T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
-            T_cam_to_drone = np.array([
-                [0,  1, 0, 0],
-                [1,  0, 0, 0],
-                [0, 0, -1, 0],
-                [0,  0, 0, 1],
-            ], dtype=float)
-
-            #T_drone_to_wld = T_cam_to_wld 
-            T_drone_to_wld = T_cam_to_drone @ T_cam_to_wld
+                if (pose_type == 'target'):
+                    R_wld_to_cam, _ = cv2.Rodrigues(rvec)
+                    T_wld_to_cam = np.eye(4)
+                    trans_marker_to_cam = tvec.flatten()
+                    rot_cam_to_drone = np.array([
+                        [ 0, -1,  0],
+                        [ 1,  0,  0],
+                        [ 0,  0,  1],
+                    ])
             
-            p = cam_pos = T_drone_to_wld[:3, 3]
-            q = cam_orient_quat = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()  # (x, y, z, w)
+                    trans_marker_to_drone = rot_cam_to_drone @ trans_marker_to_cam # + trans_cam_to_drone
+                    trans_marker_to_ned = rot_drone_to_ned @ trans_marker_to_drone # + trans_drone_to_ned
 
-            latest_arucotarget_location = p
-            latest_arucotarget_pose = q
-        
-        else:
-            latest_arucotarget_location = None
-            latest_arucotarget_pose = None
+                    x, y, z = trans_marker_to_ned
+                    text = f"ID {marker_id} MarkerLoc X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+                    
+                    cam_pos = p = trans_marker_to_ned
+                    cam_orient_quat = q = [float('nan'), float('nan'), float('nan'), float('nan')]
+
+                    latest_arucotarget_location = p
+                    latest_arucotarget_orientation = q  
+                    
+                elif (pose_type == 'drone'):
+                    R_wld_to_cam, _ = cv2.Rodrigues(rvec)
+                    #print('tvec', tvec)
+                    T_wld_to_cam = np.eye(4)
+                    T_wld_to_cam[:3, :3] = R_wld_to_cam
+                    T_wld_to_cam[:3, 3] = tvec.flatten()
+
+                    # Invert transform
+                    T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
+                    basis_change = np.array([
+                      [0,  1, 0, 0],
+                      [1,  0, 0, 0],
+                      [0, 0, -1, 0],
+                      [0,  0, 0, 1],
+                    ], dtype=float)
+
+                    #T_drone_to_wld = T_cam_to_wld 
+                    T_drone_to_wld = basis_change @ T_cam_to_wld
+                    x, y, z = T_drone_to_wld[:3,3]
+                    
+                    cam_pos = p = T_drone_to_wld[:3,3]
+                    cam_orient_quat = q =  R.from_matrix(T_drone_to_wld[:3, :3]).as_quat() 
+                    text = f"ID {marker_id} DroneLoc X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
+
+                    latest_dronelocation_witharucotarget = p
+                    latest_droneorientation_witharucotarget = q
 
 def get_latest_lighttarget_location():
     global latest_lighttarget_location
-    global latest_lighttarget_pose
-    return latest_lighttarget_location, latest_lighttarget_pose
+    global latest_lighttarget_orientation
+    return latest_lighttarget_location, latest_lighttarget_orientation
 
 def get_latest_arucotarget_location():
     global latest_arucotarget_location
-    global latest_arucotarget_pose
-    return latest_arucotarget_location, latest_arucotarget_pose
+    global latest_arucotarget_orientation
+    return latest_arucotarget_location, latest_arucotarget_orientation
+
+def get_latest_pose_from_lightmarker():
+    global latest_dronelocation_withlighttarget
+    global latest_droneorientation_withlighttarget
+    return latest_dronelocation_withlighttarget, latest_droneorientation_withlighttarget    
+
+def get_latest_pose_from_arucomarker():
+    global latest_dronelocation_witharucotarget
+    global latest_droneorientation_witharucotarget
+    return latest_dronelocation_witharucotarget, latest_droneorientation_witharucotarget

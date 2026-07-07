@@ -2,7 +2,7 @@ import asyncio
 import time
 from mavsdk import System
 from mavsdk.offboard import OffboardError, VelocityNedYaw, PositionNedYaw
-from light_detection_blobbased import get_latest_lighttarget_location, get_latest_arucotarget_location, get_pose_from_arucomarker, get_pose_from_lightmarker
+from light_detection_blobbased import get_latest_lighttarget_location, get_latest_arucotarget_location, get_latest_pose_from_lightmarker, get_latest_pose_from_arucomarker , get_pose_from_arucomarker, get_pose_from_lightmarker
 import threading
 # =========================
 # CONFIG
@@ -19,17 +19,19 @@ kpx = 0.1  # simple P controller gains
 kpy = 0.1
 kpz = 0.2
 
+pose_type = "target"  # "drone" or "target"; 'drone' when the drone's attitude is not reliable, 'target' when the drone's attitude is reliable. The former will suffer from planar ambiguity, the latter will not. The drone's attitude is reliable when the drone is in stable flight and not being disturbed by other forces.
+
 if (not MAVLINK_MULTIPLE_CONNECTIONS):
     serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
 else:
     serial_ip = "udpin://127.0.0.1:14600"  # UDP port for MAVLink connection
 
-def start_aruco_tracker():
+def start_aruco_tracker(pose_type, drone):
     """
     Start the aruco tracker in a separate thread.
     """
     threading.Thread(target=get_pose_from_arucomarker, 
-    kwargs={},
+    kwargs={"pose_type": pose_type, "drone": drone},
     daemon=True).start()
 
 def check_aruco_startcriteria_met(marker):
@@ -62,56 +64,67 @@ async def print_drone_position(drone):
         print(f"z: {pos.position.down_m_s:.2f} m")
         print("---")
     
-def get_lightmarker_offset():
+def get_lightmarker_offset(pose_type):
     """
     return:
         (x, y, z) in meters (drone frame or NED-consistent frame)
         OR None if not detected
     """
-    p, q = get_latest_lighttarget_location()
+    
+    if (pose_type == 'drone'): 
+        p, q = get_latest_pose_from_lightmarker()
+        if (p is not None):
+            x = -1.0 * p[0]
+            y = -1.0 * p[1]
+            z = -1.0 * p[2]
 
-    t = time.time()
-    if (p is not None):
-        x = -1.0 * p[0]
-        y = -1.0 * p[1]
-        z = -1.0 * p[2]
+            return (x, y, z)
+        else:
+            return None
+        
+    elif (pose_type == 'target'):
+        p, q = get_latest_lighttarget_location()
+        if (p is not None):
+            x = p[0]
+            y = p[1]
+            z = p[2]
 
-        return (x, y, z)
-    else:
-        return None
+            return (x, y, z)
+        else:
+            return None
 
-def get_arucomarker_offset():
+def get_arucomarker_offset(pose_type):
     """
     return:
         (x, y, z) in meters (drone frame or NED-consistent frame)
         OR None if not detected
     """
-    p, q = get_latest_arucotarget_location()
 
-    t = time.time()
-    if (p is not None):
-        x = -1.0 * p[0]
-        y = -1.0 * p[1]
-        z = -1.0 * p[2]
+    if (pose_type == 'drone'):
+        p, q = get_latest_pose_from_arucomarker()
+        if (p is not None):
+            x = -1.0 * p[0]
+            y = -1.0 * p[1]
+            z = -1.0 * p[2]
 
-        return (x, y, z)
-    else:
-        return None
+            return (x, y, z)
+        else:
+            return None
+    elif (pose_type == 'target'):
+        p, q = get_latest_arucotarget_location()
+        if (p is not None):
+            x = p[0]
+            y = p[1]
+            z = p[2]
+
+            return (x, y, z)
+        else:
+            return None
 
 # =========================
 # MAIN
 # =========================
-async def run():
-    drone = System()
-    await drone.connect(system_address=serial_ip)
-
-    print("Connecting...")
-
-    async for state in drone.core.connection_state():
-        if state.is_connected:
-            print("Connected")
-            break
-
+async def run(drone):
     if not ENABLE_AUTONOMY:
         print("AUTONOMY DISABLED (safety switch)")
         return
@@ -203,11 +216,11 @@ async def run():
 
                 if state == "HOVER":
                     print("Light Marker detected → TRACK")
-                    state = "TRACK"
+                    state = "LIGHT_TRACK"
 
-                if state == "TRACK":
+                if state == "LIGHT_TRACK":
                     if check_aruco_startcriteria_met(light_marker):
-                        start_aruco_tracker()
+                        start_aruco_tracker(pose_type, drone)
 
                     if check_aruco_switchcriteria_met(light_marker): 
                         print("Aruco switch criteria met → ARUCO_TRACK")
@@ -297,10 +310,24 @@ async def run():
     await drone.action.disarm()
     print("Disarmed safely.")
 
+async def connect_drone():
+    print("Connecting...")
+    drone = System()
+    await drone.connect(system_address=serial_ip)
+    print("Connecting...")
+    async for state in drone.core.connection_state():
+        if state.is_connected:
+            print("Connected")
+            return drone
+        else:
+            print("Waiting for connection...")
+            await asyncio.sleep(1)
+
 if __name__ == "__main__":
     stop_event = threading.Event()
+    drone = asyncio.run(connect_drone())
     threading.Thread(target=get_pose_from_lightmarker, 
-    kwargs={"stop_event": stop_event, "brightness_threshold": 35},
+    kwargs={"stop_event": stop_event, "pose_type": pose_type, "drone": drone, "brightness_threshold": 35},
     daemon=True).start()
 
     asyncio.run(run(stop_event))
