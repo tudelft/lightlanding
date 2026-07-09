@@ -2,18 +2,18 @@ import asyncio
 import time
 from mavsdk import System
 from mavsdk.offboard import OffboardError, VelocityNedYaw, PositionNedYaw
-from light_detection_blobbased import get_latest_lighttarget_location, get_latest_arucotarget_location, get_latest_pose_from_lightmarker, get_latest_pose_from_arucomarker , get_pose_from_arucomarker, get_pose_from_lightmarker
+from light_detection_blobbased import get_latest_lighttarget_location, get_latest_arucotarget_location, get_latest_pose_from_lightmarker, get_latest_pose_from_arucomarker , get_pose_from_arucomarker, get_pose_from_lightmarker, attitude_loop
 import threading
 # =========================
 # CONFIG
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 ENABLE_AUTONOMY = True   # MUST be set True manually
-TAKEOFF_ALT = 6.5        # meters (keep low for testing)
-MAX_VEL = 0.5             # m/s safety cap
+TAKEOFF_ALT = 1        # meters (keep low for testing)
+MAX_VEL = 0.3             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds
 TOTAL_TIMEOUT = 60        # seconds max mission time
-ARUCO_SWITCH_CRITERIA = [1.0, 1.0, 1.5]    # meters (distance to marker to switch from light-based to aruco-based TRACKING)
+ARUCO_SWITCH_CRITERIA = [1.5, 1.5, 2.0]    # meters (distance to marker to switch from light-based to aruco-based TRACKING)
 ARUCO_LANDING_THRESHOLD = 0.8  # meters (vertical distance to aruco marker to initiate landing)
 kpx = 0.1  # simple P controller gains
 kpy = 0.1
@@ -124,16 +124,10 @@ def get_arucomarker_offset(pose_type):
 # =========================
 # MAIN
 # =========================
-async def run(drone):
+async def run(stop_event, drone):
     if not ENABLE_AUTONOMY:
         print("AUTONOMY DISABLED (safety switch)")
         return
-
-    print("-- Sending holding setpoints")
-    for i in range(20):
-        await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, 0.0, 0.0))
-        print("Sending setpoints to PX4 before we can switch to offboard mode")
-        await asyncio.sleep(0.1)
 
     print("Waiting for health checks...")
     async for health in drone.telemetry.health():
@@ -141,12 +135,33 @@ async def run(drone):
           print(health)
           break
 
+    print("-- Sending holding setpoints")
+    for i in range(20):
+        try:
+            await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, -0.5, 0.0))
+            print("Offpoint set")
+        except Exception as e:
+            print("setpoint setting failed", e)
+
+        print("Sending setpoints to PX4 before we can switch to offboard mode")
+        await asyncio.sleep(0.1)
+
+    # =========================
+    # OFFBOARD
+    # =========================
+
+    print("SWITCHING TO OFFBOARD MODE!")
+    try:
+        await drone.offboard.start()
+
+    except OffboardError as e:
+        print(f"Offboard start failed: {e._result.result}")
+        return
+
     # =========================
     # ARM
     # =========================
     print("Arming...")
-    await drone.action.arm()
-
     try:
        await drone.action.arm()
        print("Armed")
@@ -158,13 +173,6 @@ async def run(drone):
     # =========================
     # TAKEOFF
     # =========================
-    print("SWITCHING TO OFFBOARD MODE!")
-    try:
-        await drone.offboard.start()
-
-    except OffboardError as e:
-        print(f"Offboard start failed: {e._result.result}")
-        return
 
     print("Taking off...")
     # Command takeoff to 5 m
@@ -173,7 +181,7 @@ async def run(drone):
     )
     # await drone.action.set_takeoff_altitude(TAKEOFF_ALT)
     # await drone.action.takeoff()
-    await print_drone_position(drone)
+#    await print_drone_position(drone)
     await asyncio.sleep(10)
 
     # =========================
@@ -323,12 +331,29 @@ async def connect_drone():
             print("Waiting for connection...")
             await asyncio.sleep(1)
 
-if __name__ == "__main__":
+
+async def main():
     stop_event = threading.Event()
-    drone = asyncio.run(connect_drone())
-    threading.Thread(target=get_pose_from_lightmarker, 
-    kwargs={"stop_event": stop_event, "pose_type": pose_type, "drone": drone, "brightness_threshold": 35},
-    daemon=True).start()
+    drone = await connect_drone()
 
-    asyncio.run(run(stop_event))
+    # Run attitude loop in the background
+    asyncio.create_task(attitude_loop(drone))
 
+    # Start OpenCV thread
+    threading.Thread(
+        target=get_pose_from_lightmarker,
+        kwargs={
+            "stop_event": stop_event,
+            "pose_type": pose_type,
+            "drone": drone,
+            "brightness_threshold": 35,
+        },
+        daemon=True,
+    ).start()
+
+    # Main autonomous mission
+    await run(stop_event, drone)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

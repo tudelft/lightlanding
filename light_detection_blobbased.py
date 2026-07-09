@@ -24,19 +24,19 @@ from helpers.led_detection import filter_circles_same_line_similar_radius, cross
 USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
-MAVLINK_MULTIPLE_CONNECTIONS = False  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
+MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 if (not MAVLINK_MULTIPLE_CONNECTIONS):
     serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
 else:
-    serial_ip = "udpout:127.0.0.1:14600"  # UDP port for MAVLink connection
+    serial_ip = "udp:127.0.0.1:14600"  # UDP port for MAVLink connection
 
 rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 markertype = 'aruco'  # 'Lshape' or 'aruco'
 show_visualization = True
-drone_attitude_reliable = False
+drone_attitude_reliable = True
 
 # L-shape marker setup
 radius_tol=0.5 
@@ -90,40 +90,52 @@ dist_coeffs_rgb = np.array(
 
 s=0.6 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
 
-async def get_drone_attitude_mavsdk_async(drone):
+
+latest_attitude = None
+latest_attitude_time = None
+mavlink_lock = threading.Lock()
+
+async def attitude_loop(drone):
+    global latest_attitude
+    global latest_attitude_time
+
+    await drone.telemetry.set_rate_attitude_quaternion(50)
+
     async for attitude in drone.telemetry.attitude_quaternion():
-        rot_drone_to_ned = R.from_quat([
-            attitude.x,  # x
-            attitude.y,  # y
-            attitude.z,  # z
-            attitude.w   # w
+
+        R_drone_to_ned = R.from_quat([
+            attitude.x,
+            attitude.y,
+            attitude.z,
+            attitude.w
         ]).as_matrix()
 
-        return rot_drone_to_ned
+        with mavlink_lock:
+            latest_attitude = R_drone_to_ned
+            latest_attitude_time = time.monotonic()
+                    
+        
+def attitude_listener_mavlink(master):
+    global latest_attitude
+    global latest_attitude_time
 
-def get_drone_attitude_mavsdk(drone):
-    R_drone_to_ned = asyncio.run(get_drone_attitude_mavsdk_async(drone))
-    return R_drone_to_ned
+    while True:
+        with mavlink_lock:
+            msg = master.recv_match(
+                type="ATTITUDE_QUATERNION",
+                blocking=True
+            )
 
-def get_drone_attitude_mavlink(master):  
-    msg = master.recv_match(
-        type="ATTITUDE_QUATERNION",
-        blocking=True,
-        timeout=2.0
-    )
-    if msg is None:
-        print("Timed out waiting for ATTITUDE_QUATERNION")
-    else:
-        print(msg.q1, msg.q2, msg.q3, msg.q4)
-    
-    rot_drone_to_ned = R.from_quat([
-        msg.q2,  # x
-        msg.q3,  # y
-        msg.q4,  # z
-        msg.q1   # w
-    ]).as_matrix()
+            if msg is not None:
+                R_drone_to_ned = R.from_quat([
+                    msg.q2,  # x
+                    msg.q3,  # y
+                    msg.q4,  # z
+                    msg.q1   # w
+                ]).as_matrix()
 
-    return rot_drone_to_ned
+                latest_attitude = R_drone_to_ned
+                latest_attitude_time = time.monotonic()
     
 def detect_lights_sendodometry(
     brightness_threshold,
@@ -151,6 +163,11 @@ def detect_lights_sendodometry(
         print("Waiting for FC boot time...")
         fc_time_us = get_fc_time_us(m)
         print(f"FC time received: {fc_time_us}")
+        threading.Thread(
+            target=attitude_listener_mavlink,
+            args=(m,),
+            daemon=True
+        ).start()
 
         # Estimate offset between companion monotonic clock
         # and FC boot clock
@@ -167,7 +184,8 @@ def detect_lights_sendodometry(
     global_tf_set = False 
     if (not global_tf_set and CONNECT_MAVLINK):
         time.sleep(3)
-        set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
+        with mavlink_lock:
+            set_global_origin(m, LAT_DEG, LON_DEG, ALT_M)
         global_tf_set = True 
         time.sleep(1)
 
@@ -200,7 +218,6 @@ def detect_lights_sendodometry(
         "AnalogueGain": 1.0}
         picam2.set_controls(controls)
         picam2.start()
-
         camera_matrix = scale_camera_matrix(camera_matrix, s)
 
     # try:
@@ -240,10 +257,12 @@ def detect_lights_sendodometry(
             # Use monotonic clock, NOT time.time()
             image_capture_time_usec = int(time.monotonic() * 1e6)
             mavlink_timestamp = image_capture_time_usec + offset_us
+            with mavlink_lock:
+                rot_drone_to_ned = latest_attitude.copy()
+                attitude_age = time.monotonic() - latest_attitude_time
+   
             frame = picam2.capture_array()
-            
-        rot_drone_to_ned = get_drone_attitude_mavlink(m)
-
+        print('attitude_age', attitude_age)    
         height, width  = frame.shape[:2]
         frame = cv2.resize(frame, (int(s*width), int(s*height)))
         if (markertype == 'aruco'): # the mono camera is 180 degrees titled
@@ -420,7 +439,11 @@ def detect_lights_sendodometry(
 
                ## Show images
                cv2.imshow("Thresholded", thresh)
+               cv2.waitKey(1)
+               cv2.imshow("Annotated", annotated)
+               cv2.waitKey(1)
                cv2.imshow("Annotated_colors", annotated_colors)
+               cv2.waitKey(1)
                cv2.imshow("Undistorted Image", image_undistorted)
                cv2.waitKey(1)
 
@@ -455,14 +478,14 @@ def detect_lights_sendodometry(
                        )
                        led_count += 1
 
-                cv2.imshow("Annotated", annotated)              
+#                cv2.imshow("Annotated", annotated)              
 #                print(f"Detected LEDs: {led_count}")
 
                 if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
                     #pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
                     # print('Reprojection error:', pose_dict["reprojection_error"])
-                    print('Reprojection error:', pose_dict["reprojection_error"])
-                    print('Positive depth', pose_dict["positive_depth"])
+#                    print('Reprojection error:', pose_dict["reprojection_error"])
+#                    print('Positive depth', pose_dict["positive_depth"])
                     if (drone_attitude_reliable):
                         x = pose_dict["marker_position"][0]
                         y = pose_dict["marker_position"][1]
@@ -510,7 +533,7 @@ def detect_lights_sendodometry(
                     if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"] and CONNECT_MAVLINK):
                         # Calculate actual pipeline latency just for monitoring
                         pipeline_latency_ms = (int(time.monotonic() * 1e6) - image_capture_time_usec) / 1000.0
-                        print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
+#                        print(f"Sending ODOMETRY. Msg Time: {mavlink_timestamp} | Pipeline Latency: {pipeline_latency_ms:.3f}ms")
      
                         msg = mavutil.mavlink.MAVLink_odometry_message(
                             mavlink_timestamp,
@@ -540,7 +563,7 @@ def detect_lights_sendodometry(
                             mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
                         )
                         
-                        m.mav.send(msg)
+#                        m.mav.send(msg)
 
         elif markertype == 'aruco':
             marker_found = False
@@ -659,7 +682,7 @@ def detect_lights_sendodometry(
                     mavutil.mavlink.MAV_ESTIMATOR_TYPE_VISION
                 )
                 
-                m.mav.send(msg)
+#                m.mav.send(msg)
 
 #        if cv2.waitKey(1) & 0xFF == ord("q"):
 #            cv2.destroyAllWindows()
@@ -690,6 +713,15 @@ latest_arucotarget_orientation = None
 latest_dronelocation_witharucotarget = None
 latest_droneorientation_witharucotarget = None
 
+def start_attitude_listener_thread(drone):
+    try:
+        threading.Thread(
+        target=attitude_listener_mavsdk,
+        args=(drone,),
+        daemon=True).start()
+    except:
+        print('Unable to start attitude listener thread')
+
 def get_pose_from_lightmarker(stop_event, pose_type, drone,
     brightness_threshold,
     min_area: int = 1,
@@ -718,7 +750,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
     "AnalogueGain": 1.0}
     picam2.set_controls(controls)
     picam2.start()
-
+    
     camera_matrix = scale_camera_matrix(camera_matrix, s)
 
     if (show_visualization):
@@ -743,11 +775,15 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         # Use monotonic clock, NOT time.time()
         image_capture_time_usec = int(time.monotonic() * 1e6)
         mavlink_timestamp = image_capture_time_usec
+        with mavlink_lock:
+            rot_drone_to_ned = latest_attitude.copy()
+            attitude_age = time.monotonic() - latest_attitude_time
+
         frame = picam2.capture_array()
-        rot_drone_to_ned = get_drone_attitude_mavsdk(drone)
         height, width  = frame.shape[:2]
         frame = cv2.resize(frame, (int(s*width), int(s*height)))
 #        frame = cv2.rotate(frame, cv2.ROTATE_180) # rotation was needed for mono camera, but not for rgb camera
+        height, width  = frame.shape[:2]
 
         red = frame[:, :, 0]
         green = frame[:, :, 1]
@@ -757,7 +793,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
         camera_matrix,
         dist_coeffs,
-        (w, h),
+        (width,height),
         np.eye(3),
         balance=0.0)
 
@@ -766,7 +802,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
             dist_coeffs,
             np.eye(3),
             new_K,
-            (w, h),
+            (width, height),
             cv2.CV_16SC2,
         )
         
@@ -1014,8 +1050,11 @@ def get_pose_from_arucomarker(pose_type, drone):
         # Use monotonic clock, NOT time.time()
         image_capture_time_usec = int(time.monotonic() * 1e6)
         mavlink_timestamp = image_capture_time_usec
+        with mavlink_lock:
+            rot_drone_to_ned = latest_attitude.copy()
+            attitude_age = time.monotonic() - latest_attitude_time
+
         frame = picam2.capture_array()
-        rot_drone_to_ned = get_drone_attitude_mavsdk(drone)
         height, width  = frame.shape[:2]
         frame = cv2.resize(frame, (int(s*width), int(s*height)))
         frame = cv2.rotate(frame, cv2.ROTATE_180)
