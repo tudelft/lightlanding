@@ -2,6 +2,7 @@ import asyncio
 import time
 from mavsdk import System
 from mavsdk.offboard import OffboardError, VelocityNedYaw, PositionNedYaw
+from mavsdk.action import ActionError
 from light_detection_blobbased import get_latest_lighttarget_location, get_latest_arucotarget_location, get_latest_pose_from_lightmarker, get_latest_pose_from_arucomarker , get_pose_from_arucomarker, get_pose_from_lightmarker, attitude_loop
 import threading
 # =========================
@@ -9,11 +10,11 @@ import threading
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 ENABLE_AUTONOMY = True   # MUST be set True manually
-TAKEOFF_ALT = 1        # meters (keep low for testing)
+TAKEOFF_ALT = 3       # meters (keep low for testing)
 MAX_VEL = 0.3             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds
 TOTAL_TIMEOUT = 60        # seconds max mission time
-ARUCO_SWITCH_CRITERIA = [1.5, 1.5, 2.0]    # meters (distance to marker to switch from light-based to aruco-based TRACKING)
+ARUCO_SWITCH_CRITERIA = [1.5, 1.5, 1.0]    # meters (distance to marker to switch from light-based to aruco-based TRACKING)
 ARUCO_LANDING_THRESHOLD = 0.8  # meters (vertical distance to aruco marker to initiate landing)
 kpx = 0.1  # simple P controller gains
 kpy = 0.1
@@ -124,65 +125,76 @@ def get_arucomarker_offset(pose_type):
 # =========================
 # MAIN
 # =========================
+async def stream_setpoints(drone, stop_signal):
+    """Background loop to ensure PX4 never sees a gap in offboard data"""
+    while not stop_signal.is_set():
+        try:
+            await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, 0, 0.0))
+        except Exception:
+            pass
+        await asyncio.sleep(0.1) # Must be > 2Hz (0.5s max gap)
+
 async def run(stop_event, drone):
     if not ENABLE_AUTONOMY:
         print("AUTONOMY DISABLED (safety switch)")
         return
 
-    print("Waiting for health checks...")
+    print("Waiting for local and home position health checks...")
     async for health in drone.telemetry.health():
-          print("HEALTH STATUS")
-          print(health)
-          break
+        if health.is_local_position_ok and health.is_home_position_ok:
+            break
+        await asyncio.sleep(1)
 
-    print("-- Sending holding setpoints")
-    for i in range(20):
-        try:
-            await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, -0.5, 0.0))
-            print("Offpoint set")
-        except Exception as e:
-            print("setpoint setting failed", e)
+    # Start continuous background setpoint streaming
+    stop_streaming = asyncio.Event()
+    stream_task = asyncio.create_task(stream_setpoints(drone, stop_streaming))
+    
+    # Give PX4 a moment to register the initial stream
+    await asyncio.sleep(1.5)
 
-        print("Sending setpoints to PX4 before we can switch to offboard mode")
-        await asyncio.sleep(0.1)
+    # 1. ARMING
+    print("Arming...")
+    try:
+        await drone.action.arm()
+        print("Armed.")
+    except ActionError as e:
+        print(f"Arming failed: {e}")
+        stop_streaming.set()
+        await stream_task
+        return
 
-    # =========================
-    # OFFBOARD
-    # =========================
+    await asyncio.sleep(0.5)
 
+    # 2. Switch to offboard
     print("SWITCHING TO OFFBOARD MODE!")
     try:
         await drone.offboard.start()
-
+        print("Successfully in Offboard mode!")
     except OffboardError as e:
         print(f"Offboard start failed: {e._result.result}")
+        # Stop background loop and clean up safety if it fails
+        stop_streaming.set()
+        await stream_task
+        await drone.action.disarm()
         return
 
-    # =========================
-    # ARM
-    # =========================
-    print("Arming...")
-    try:
-       await drone.action.arm()
-       print("Armed")
-
-    except ActionError as e:
-       print(f"Arming failed: {e}")
-       return
-
-    # =========================
-    # TAKEOFF
-    # =========================
+    # 3. TAKEOFF
 
     print("Taking off...")
     # Command takeoff to 5 m
-    await drone.offboard.set_position_ned(
-        PositionNedYaw(0.0, 0.0, -1 * TAKEOFF_ALT, 0.0)
-    )
-    # await drone.action.set_takeoff_altitude(TAKEOFF_ALT)
-    # await drone.action.takeoff()
-#    await print_drone_position(drone)
-    await asyncio.sleep(10)
+    for i in range(100):
+        await drone.offboard.set_position_ned(
+            PositionNedYaw(0.0, 0.0, -1 * TAKEOFF_ALT, 0.0)
+        )
+        # await drone.action.set_takeoff_altitude(TAKEOFF_ALT)
+        # await drone.action.takeoff()
+    #    await print_drone_position(drone)
+        await asyncio.sleep(0.1)
+
+    # 4. Transition to actual flight loop
+    print("Beginning flight plan...")
+    stop_streaming.set() # Stop the baseline holding stream
+    await stream_task
 
     # =========================
     # START OFFBOARD (HOVER FIRST)
@@ -204,40 +216,72 @@ async def run(stop_event, drone):
     try:
         while True:
             print(f"STATE: {state}")
-            await print_drone_position(drone)
+            # await print_drone_position(drone)
             now = time.time()
             # safety timeout
             if now - start_time > TOTAL_TIMEOUT:
                 print("Mission timeout → landing")
                 state = "LAND"
 
-            # =========================
-            # LAND STATE
-            # =========================
             if state == "LAND":
                 break
+
+            if state == "HOVER":
+                await drone.offboard.set_velocity_ned(
+                    VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
+                )
 
             light_marker = get_lightmarker_offset()
             if light_marker is not None:
                 mx, my, mz = light_marker
                 last_seen = now
+                print("Light Marker detected → TRACK")
+                state = "LIGHT_TRACK"
+            
+            elif light_marker is None and state != "ARUCO_TRACK":
+                state == "HOVER"
 
-                if state == "HOVER":
-                    print("Light Marker detected → TRACK")
-                    state = "LIGHT_TRACK"
+            if state == "LIGHT_TRACK":
+                if check_aruco_startcriteria_met(light_marker):
+                    start_aruco_tracker(pose_type, drone)
 
-                if state == "LIGHT_TRACK":
-                    if check_aruco_startcriteria_met(light_marker):
-                        start_aruco_tracker(pose_type, drone)
+                if check_aruco_switchcriteria_met(light_marker): 
+                    print("Aruco switch criteria met → ARUCO_TRACK")
+                    state = "ARUCO_TRACK"
 
-                    if check_aruco_switchcriteria_met(light_marker): 
-                        print("Aruco switch criteria met → ARUCO_TRACK")
-                        state = "ARUCO_TRACK"
+                elif not check_aruco_switchcriteria_met(light_marker):
+                    # velocity control (capped to MAX_VEL)
+                    vx = kpx * mx
+                    vy = kpy * my
+                    vz = kpz * mz if (abs(mz) >= 2.5) else 0.0
+
+                    vx = max(min(vx, MAX_VEL), -MAX_VEL)
+                    vy = max(min(vy, MAX_VEL), -MAX_VEL)
+                    vz = max(min(vz, MAX_VEL), -MAX_VEL)
+                    await drone.offboard.set_velocity_ned(
+                        VelocityNedYaw(vx, vy, vz, 0.0)
+                    )
+
+                    print(f"Light-based TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
+                
+            if state == "ARUCO_TRACK":
+                stop_event.set()  # Stop the light marker detection thread
+                light_marker = None  # Clear the light marker variable
+                aruco_marker = get_arucomarker_offset()
+
+                if (aruco_marker is not None):
+                    mx, my, mz = aruco_marker
+                    print("Aruco marker detected → TRACKING")
+                    if (abs(mz) < ARUCO_LANDING_THRESHOLD):
+                        print("Aruco marker close enough → LANDING")
+                        state = "LAND"
+                        break
+
                     else:
                         # velocity control (capped to MAX_VEL)
                         vx = kpx * mx
                         vy = kpy * my
-                        vz = kpz * mz if (abs(mz) >= 2.5) else 0.0
+                        vz = kpz * mz 
 
                         vx = max(min(vx, MAX_VEL), -MAX_VEL)
                         vy = max(min(vy, MAX_VEL), -MAX_VEL)
@@ -246,42 +290,14 @@ async def run(stop_event, drone):
                             VelocityNedYaw(vx, vy, vz, 0.0)
                         )
 
-                        print(f"Light-based TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
-                
-                if state == "ARUCO_TRACK":
-                    stop_event.set()  # Stop the light marker detection thread
-                    light_marker = None  # Clear the light marker variable
-                    aruco_marker = get_arucomarker_offset()
+                else:
+                    print("Aruco marker lost → HOVER")
+                    state = "HOVER"
+                    await drone.offboard.set_velocity_ned(
+                        VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
+                    )
 
-                    if (aruco_marker is not None):
-                        mx, my, mz = aruco_marker
-                        print("Aruco marker detected → TRACKING")
-                        if (abs(mz) < ARUCO_LANDING_THRESHOLD):
-                            print("Aruco marker close enough → LANDING")
-                            state = "LAND"
-                            break
-
-                        else:
-                            # velocity control (capped to MAX_VEL)
-                            vx = kpx * mx
-                            vy = kpy * my
-                            vz = kpz * mz 
-
-                            vx = max(min(vx, MAX_VEL), -MAX_VEL)
-                            vy = max(min(vy, MAX_VEL), -MAX_VEL)
-                            vz = max(min(vz, MAX_VEL), -MAX_VEL)
-                            await drone.offboard.set_velocity_ned(
-                                VelocityNedYaw(vx, vy, vz, 0.0)
-                            )
-
-                    else:
-                        print("Aruco marker lost → HOVER")
-                        state = "HOVER"
-                        await drone.offboard.set_velocity_ned(
-                            VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
-                        )
-
-                    print(f"TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
+                print(f"TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
 
 
             else:
