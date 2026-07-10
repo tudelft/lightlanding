@@ -10,7 +10,7 @@ import threading
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 ENABLE_AUTONOMY = True   # MUST be set True manually
-TAKEOFF_ALT = 3       # meters (keep low for testing)
+TAKEOFF_ALT = 3.5       # meters (keep low for testing)
 MAX_VEL = 0.3             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds
 TOTAL_TIMEOUT = 60        # seconds max mission time
@@ -129,7 +129,7 @@ async def stream_setpoints(drone, stop_signal):
     """Background loop to ensure PX4 never sees a gap in offboard data"""
     while not stop_signal.is_set():
         try:
-            await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, 0, 0.0))
+            await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, 0.0, 0.0))
         except Exception:
             pass
         await asyncio.sleep(0.1) # Must be > 2Hz (0.5s max gap)
@@ -140,10 +140,10 @@ async def run(stop_event, drone):
         return
 
     print("Waiting for local and home position health checks...")
-    async for health in drone.telemetry.health():
-        if health.is_local_position_ok and health.is_home_position_ok:
-            break
-        await asyncio.sleep(1)
+#    async for health in drone.telemetry.health():
+#        if health.is_local_position_ok and health.is_home_position_ok:
+#            break
+#        await asyncio.sleep(1)
 
     # Start continuous background setpoint streaming
     stop_streaming = asyncio.Event()
@@ -180,6 +180,9 @@ async def run(stop_event, drone):
 
     # 3. TAKEOFF
 
+    stop_streaming.set() # Stop the baseline holding stream
+    await stream_task
+
     print("Taking off...")
     # Command takeoff to 5 m
     for i in range(100):
@@ -189,19 +192,18 @@ async def run(stop_event, drone):
         # await drone.action.set_takeoff_altitude(TAKEOFF_ALT)
         # await drone.action.takeoff()
     #    await print_drone_position(drone)
-        await asyncio.sleep(0.1)
-
+#        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.5)
+        
     # 4. Transition to actual flight loop
     print("Beginning flight plan...")
-    stop_streaming.set() # Stop the baseline holding stream
-    await stream_task
 
     # =========================
     # START OFFBOARD (HOVER FIRST)
     # MUST send initial setpoint before start
     # =========================
     print("Starting offboard hover...")
-    await print_drone_position(drone)
+#    await print_drone_position(drone)
     await drone.offboard.set_velocity_ned(
             VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
         )
@@ -231,7 +233,7 @@ async def run(stop_event, drone):
                     VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
                 )
 
-            light_marker = get_lightmarker_offset()
+            light_marker = get_lightmarker_offset(pose_type)
             if light_marker is not None:
                 mx, my, mz = light_marker
                 last_seen = now
@@ -267,7 +269,7 @@ async def run(stop_event, drone):
             if state == "ARUCO_TRACK":
                 stop_event.set()  # Stop the light marker detection thread
                 light_marker = None  # Clear the light marker variable
-                aruco_marker = get_arucomarker_offset()
+                aruco_marker = get_arucomarker_offset(pose_type)
 
                 if (aruco_marker is not None):
                     mx, my, mz = aruco_marker
