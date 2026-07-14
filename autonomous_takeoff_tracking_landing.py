@@ -60,10 +60,13 @@ def check_aruco_switchcriteria_met(marker):
 async def print_drone_position(drone):
     async for pos in drone.telemetry.position_velocity_ned():
         print("Drone position (NED):")
-        print(f"x: {pos.position.north_m_s:.2f} m")
-        print(f"y: {pos.position.east_m_s:.2f} m")
-        print(f"z: {pos.position.down_m_s:.2f} m")
+        print(f"x: {pos.position.north_m:.2f} m")
+        print(f"y: {pos.position.east_m:.2f} m")
+        print(f"z: {pos.position.down_m:.2f} m")
         print("---")
+async def get_current_position(drone):
+     async for position in drone.telemetry.position_velocity_ned()
+           return position.position    
     
 def get_lightmarker_offset(pose_type):
     """
@@ -185,15 +188,15 @@ async def run(stop_event, drone):
 
     print("Taking off...")
     # Command takeoff to 5 m
-    for i in range(100):
+    for i in range(150):
         await drone.offboard.set_position_ned(
             PositionNedYaw(0.0, 0.0, -1 * TAKEOFF_ALT, 0.0)
         )
         # await drone.action.set_takeoff_altitude(TAKEOFF_ALT)
         # await drone.action.takeoff()
     #    await print_drone_position(drone)
-#        await asyncio.sleep(0.1)
-        await asyncio.sleep(0.5)
+#        time.sleep(0.2)
+        await asyncio.sleep(0.1)
         
     # 4. Transition to actual flight loop
     print("Beginning flight plan...")
