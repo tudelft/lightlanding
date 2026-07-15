@@ -12,14 +12,14 @@ import threading
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 ENABLE_AUTONOMY = True   # MUST be set True manually
 TAKEOFF_ALT = 3.5       # meters (keep low for testing)
-MAX_VEL = 0.3             # m/s safety cap
+MAX_VEL = 0.7             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds
 TOTAL_TIMEOUT = 60        # seconds max mission time
 ARUCO_SWITCH_CRITERIA = [1.5, 1.5, 1.0]    # meters (distance to marker to switch from light-based to aruco-based TRACKING)
 ARUCO_LANDING_THRESHOLD = 0.8  # meters (vertical distance to aruco marker to initiate landing)
-kpx = 0.1  # simple P controller gains
-kpy = 0.1
-kpz = 0.2
+kpx = 0.5  # simple P controller gains
+kpy = 0.5
+kpz = 0.15
 
 pose_type = "target"  # "drone" or "target"; 'drone' when the drone's attitude is not reliable, 'target' when the drone's attitude is reliable. The former will suffer from planar ambiguity, the latter will not. The drone's attitude is reliable when the drone is in stable flight and not being disturbed by other forces.
 
@@ -66,7 +66,7 @@ async def print_drone_position(drone):
         print(f"z: {pos.position.down_m:.2f} m")
         print("---")
 async def get_current_position(drone):
-     async for position in drone.telemetry.position_velocity_ned()
+     async for position in drone.telemetry.position_velocity_ned():
            return position.position    
     
 def get_lightmarker_offset(pose_type):
@@ -191,7 +191,7 @@ async def run(stop_event, drone):
 
     print("Taking off...")
     # Command takeoff to 5 m
-    for i in range(150):
+    for i in range(200):
         await drone.offboard.set_position_ned(
             PositionNedYaw(0.0, 0.0, -1 * TAKEOFF_ALT, 0.0)
         )
@@ -199,7 +199,7 @@ async def run(stop_event, drone):
         # await drone.action.takeoff()
     #    await print_drone_position(drone)
 #        time.sleep(0.2)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.2)
         
     # 4. Transition to actual flight loop
     print("Beginning flight plan...")
@@ -305,7 +305,7 @@ async def run(stop_event, drone):
                         VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
                     )
 
-                print(f"TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
+                print(f" Aruco TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
 
 
             # else:
@@ -402,7 +402,6 @@ async def main():
 
     # Main autonomous mission
     await run(stop_event, drone)
-
 
 if __name__ == "__main__":
     asyncio.run(main())

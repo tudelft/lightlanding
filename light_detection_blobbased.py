@@ -729,6 +729,11 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
     # This function is similar to detect_lights_sendodometry but only returns the estimated pose without any MAVLink communication or visualization. It can be used for unit testing the pose estimation logic in isolation.
 
     global camera_matrix_rgb, dist_coeffs_rgb
+    global latest_lighttarget_location
+    global latest_lighttarget_orientation
+    global latest_dronelocation_withlighttarget
+    global latest_droneorientation_withlighttarget
+
     camera_matrix = camera_matrix_rgb.copy()
     dist_coeffs = dist_coeffs_rgb.copy()
 
@@ -994,11 +999,6 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                     cv2.imshow("Annotated", annotated)              
                     cv2.waitKey(1)
 
-                global latest_lighttarget_location
-                global latest_lighttarget_orientation
-                global latest_dronelocation_withlighttarget
-                global latest_droneorientation_withlighttarget
-
                 if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]):
                     if (pose_type == 'target'):
                         latest_lighttarget_location = p
@@ -1012,9 +1012,20 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                         # latest_lighttarget_location = None
                         # latest_lighttarget_orientation = None
 
+                else:
+                        latest_lighttarget_location = None
+                        latest_lighttarget_orientation = None
+                        latest_dronelocation_withlighttarget = None
+                        latest_droneorientation_withlighttarget = None
+
 def get_pose_from_arucomarker(pose_type, drone):
     global camera_matrix_mono
     global dist_coeffs_mono
+
+    global latest_arucotarget_location
+    global latest_arucotarget_orientation
+    global latest_dronelocation_witharucotarget 
+    global latest_droneorientation_witharucotarget
     
     camera_matrix = camera_matrix_mono.copy()
     dist_coeffs = dist_coeffs_mono.copy()
@@ -1115,11 +1126,6 @@ def get_pose_from_arucomarker(pose_type, drone):
                 cv2.waitKey(1)
 
             if (aruco_marker_found):    
-                global latest_arucotarget_location
-                global latest_arucotarget_orientation
-                global latest_dronelocation_witharucotarget 
-                global latest_droneorientation_witharucotarget
-
                 if (pose_type == 'target'):
                     R_wld_to_cam, _ = cv2.Rodrigues(rvec)
                     T_wld_to_cam = np.eye(4)
@@ -1168,6 +1174,12 @@ def get_pose_from_arucomarker(pose_type, drone):
 
                     latest_dronelocation_witharucotarget = p
                     latest_droneorientation_witharucotarget = q
+
+            else:
+                latest_arucotarget_location = None
+                latest_arucotarget_orientation = None
+                latest_dronelocation_witharucotarget = None
+                latest_droneorientation_witharucotarget = None
 
 def get_latest_lighttarget_location():
     global latest_lighttarget_location
