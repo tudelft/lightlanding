@@ -713,15 +713,6 @@ latest_arucotarget_orientation = None
 latest_dronelocation_witharucotarget = None
 latest_droneorientation_witharucotarget = None
 
-def start_attitude_listener_thread(drone):
-    try:
-        threading.Thread(
-        target=attitude_listener_mavsdk,
-        args=(drone,),
-        daemon=True).start()
-    except:
-        print('Unable to start attitude listener thread')
-
 def get_pose_from_lightmarker(stop_event, pose_type, drone,
     brightness_threshold,
     min_area: int = 1,

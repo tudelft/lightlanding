@@ -140,7 +140,7 @@ async def stream_setpoints(drone, stop_signal):
             await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, 0.0, 0.0))
         except Exception:
             pass
-        await asyncio.sleep(0.1) # Must be > 2Hz (0.5s max gap)
+        await asyncio.sleep(0.4) # Must be > 2Hz (0.5s max gap)
 
 async def run(stop_event, drone):
     if not ENABLE_AUTONOMY:
@@ -279,6 +279,7 @@ async def run(stop_event, drone):
 
                 if (aruco_marker is not None):
                     mx, my, mz = aruco_marker
+                    
                     print("Aruco marker detected → TRACKING")
                     if (abs(mz) < ARUCO_LANDING_THRESHOLD):
                         print("Aruco marker close enough → LANDING")
@@ -298,6 +299,8 @@ async def run(stop_event, drone):
                             VelocityNedYaw(vx, vy, vz, 0.0)
                         )
 
+                        print(f" Aruco TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
+
                 else:
                     print("Aruco marker lost → HOVER")
                     state = "HOVER"
@@ -305,7 +308,6 @@ async def run(stop_event, drone):
                         VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
                     )
 
-                print(f" Aruco TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
 
 
             # else:
