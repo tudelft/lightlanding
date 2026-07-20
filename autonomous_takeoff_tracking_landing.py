@@ -12,14 +12,14 @@ import threading
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 ENABLE_AUTONOMY = True   # MUST be set True manually
 TAKEOFF_ALT = 3.5       # meters (keep low for testing)
-MAX_VEL = 0.7             # m/s safety cap
+MAX_VEL = 0.1             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds
-TOTAL_TIMEOUT = 60        # seconds max mission time
-ARUCO_SWITCH_CRITERIA = [1.5, 1.5, 1.0]    # meters (distance to marker to switch from light-based to aruco-based TRACKING)
-ARUCO_LANDING_THRESHOLD = 0.8  # meters (vertical distance to aruco marker to initiate landing)
-kpx = 0.5  # simple P controller gains
-kpy = 0.5
-kpz = 0.15
+TOTAL_TIMEOUT = 120        # seconds max mission time
+ARUCO_SWITCH_CRITERIA = [1.5, 1.5, 1.5]    # meters (distance to marker to switch from light-based to aruco-based TRACKING)
+ARUCO_LANDING_THRESHOLD = 0.5  # meters (vertical distance to aruco marker to initiate landing)
+kpx = 0.25  # simple P controller gains
+kpy = 0.25
+kpz = 0.25
 
 pose_type = "target"  # "drone" or "target"; 'drone' when the drone's attitude is not reliable, 'target' when the drone's attitude is reliable. The former will suffer from planar ambiguity, the latter will not. The drone's attitude is reliable when the drone is in stable flight and not being disturbed by other forces.
 
@@ -36,6 +36,7 @@ def start_aruco_tracker(pose_type, drone):
     kwargs={"pose_type": pose_type, "drone": drone},
     daemon=True).start()
 
+aruco_started = 0
 def check_aruco_startcriteria_met(marker):
     """
     Check if the marker is close enough to start aruco-based landing mode.
@@ -43,6 +44,7 @@ def check_aruco_startcriteria_met(marker):
     mx, my, mz = marker
     if (abs(mx) < ARUCO_SWITCH_CRITERIA[0] + 1 and abs(my) < ARUCO_SWITCH_CRITERIA[1] + 1 and abs(mz) < ARUCO_SWITCH_CRITERIA[2] + 1):
         print("Aruco start criteria met → starting aruco tracker")
+        aruco_started = 1
         return True
     else:
         return False
@@ -98,6 +100,7 @@ def get_lightmarker_offset(pose_type):
         
         else:
             return None
+            print('Light marker offset is None')
 
 def get_arucomarker_offset(pose_type):
     """
@@ -191,7 +194,7 @@ async def run(stop_event, drone):
 
     print("Taking off...")
     # Command takeoff to 5 m
-    for i in range(200):
+    for i in range(150):
         await drone.offboard.set_position_ned(
             PositionNedYaw(0.0, 0.0, -1 * TAKEOFF_ALT, 0.0)
         )
@@ -199,7 +202,7 @@ async def run(stop_event, drone):
         # await drone.action.takeoff()
     #    await print_drone_position(drone)
 #        time.sleep(0.2)
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.1)
         
     # 4. Transition to actual flight loop
     print("Beginning flight plan...")
@@ -235,6 +238,7 @@ async def run(stop_event, drone):
                 break
 
             elif state == "HOVER":
+                print('State HOVER, sending zero velocities')
                 await drone.offboard.set_velocity_ned(
                     VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
                 )
@@ -250,7 +254,7 @@ async def run(stop_event, drone):
                 state = "HOVER"
 
             if state == "LIGHT_TRACK":
-                if check_aruco_startcriteria_met(light_marker):
+                if check_aruco_startcriteria_met(light_marker) and not aruco_started:
                     start_aruco_tracker(pose_type, drone)
 
                 if check_aruco_switchcriteria_met(light_marker): 
@@ -273,6 +277,7 @@ async def run(stop_event, drone):
                     print(f"Light-based TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
                 
             if state == "ARUCO_TRACK":
+                print('ARUCO_TRACK')
                 stop_event.set()  # Stop the light marker detection thread
                 light_marker = None  # Clear the light marker variable
                 aruco_marker = get_arucomarker_offset(pose_type)
@@ -386,10 +391,10 @@ async def connect_drone():
 async def main():
     stop_event = threading.Event()
     drone = await connect_drone()
-
+    await   asyncio.sleep(2)
     # Run attitude loop in the background
     asyncio.create_task(attitude_loop(drone))
-
+    await  asyncio.sleep(2) # get some attitude first before  starting light tracker
     # Start OpenCV thread
     threading.Thread(
         target=get_pose_from_lightmarker,

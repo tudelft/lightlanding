@@ -35,7 +35,7 @@ rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 markertype = 'aruco'  # 'Lshape' or 'aruco'
-show_visualization = True
+show_visualization = False
 drone_attitude_reliable = True
 
 # L-shape marker setup
@@ -96,21 +96,23 @@ latest_attitude_time = None
 mavlink_lock = threading.Lock()
 
 async def attitude_loop(drone):
+    print('Starting attitude listener loop')
     global latest_attitude
     global latest_attitude_time
 
     await drone.telemetry.set_rate_attitude_quaternion(50)
 
     async for attitude in drone.telemetry.attitude_quaternion():
-
+#        print('Awaiting attitude from drone')
         R_drone_to_ned = R.from_quat([
             attitude.x,
             attitude.y,
             attitude.z,
             attitude.w
         ]).as_matrix()
-
+#        print('R_drone_to_ned', R_drone_to_ned)
         with mavlink_lock:
+#            print('Setting latest_attitude', latest_attitude)
             latest_attitude = R_drone_to_ned
             latest_attitude_time = time.monotonic()
                     
@@ -713,6 +715,22 @@ latest_arucotarget_orientation = None
 latest_dronelocation_witharucotarget = None
 latest_droneorientation_witharucotarget = None
 
+from picamera2 import Picamera2
+picam2 = Picamera2(0)  # Use camera port 0 (RGB camera) for L-shape
+full_size = picam2.camera_properties["PixelArraySize"]
+config = picam2.create_video_configuration(
+            main={"size": full_size, "format": "RGB888"},
+            buffer_count=1,
+            queue=False)
+            
+picam2.configure(config)
+controls = {
+    "ScalerCrop": (0, 0, *full_size),
+    "ExposureTime": exposure_time_rgb,   # microseconds
+    "AnalogueGain": 1.0}
+picam2.set_controls(controls)
+picam2.start()
+
 def get_pose_from_lightmarker(stop_event, pose_type, drone,
     brightness_threshold,
     min_area: int = 1,
@@ -728,24 +746,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
     camera_matrix = camera_matrix_rgb.copy()
     dist_coeffs = dist_coeffs_rgb.copy()
 
-    picam2 = None
     cap = None
-
-    from picamera2 import Picamera2
-    picam2 = Picamera2(0)  # Use camera port 0 (RGB camera) for L-shape
-    full_size = picam2.camera_properties["PixelArraySize"]
-    config = picam2.create_video_configuration(
-            main={"size": full_size, "format": "RGB888"},
-            buffer_count=1,
-            queue=False)
-            
-    picam2.configure(config)
-    controls = {
-    "ScalerCrop": (0, 0, *full_size),
-    "ExposureTime": exposure_time_rgb,   # microseconds
-    "AnalogueGain": 1.0}
-    picam2.set_controls(controls)
-    picam2.start()
     
     camera_matrix = scale_camera_matrix(camera_matrix, s)
 
@@ -1008,6 +1009,22 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                         latest_lighttarget_orientation = None
                         latest_dronelocation_withlighttarget = None
                         latest_droneorientation_withlighttarget = None
+                        print('Setting light target and drone location to None, marker not found')
+
+picam2_ar = Picamera2(1)
+full_size_ar = picam2_ar.camera_properties["PixelArraySize"]
+config_ar = picam2_ar.create_video_configuration(
+            main={"size": full_size, "format": "RGB888"},
+            buffer_count=1,
+            queue=False)
+
+picam2_ar.configure(config_ar)
+controls_ar = {
+    "ScalerCrop": (0, 0, *full_size),
+    "ExposureTime": exposure_time_mono,   # microseconds
+    "AnalogueGain": 1.0}
+picam2_ar.set_controls(controls_ar)
+picam2_ar.start()
 
 def get_pose_from_arucomarker(pose_type, drone):
     global camera_matrix_mono
@@ -1021,24 +1038,7 @@ def get_pose_from_arucomarker(pose_type, drone):
     camera_matrix = camera_matrix_mono.copy()
     dist_coeffs = dist_coeffs_mono.copy()
 
-    picam2 = None
     cap = None
-
-    from picamera2 import Picamera2
-    picam2 = Picamera2(1)  # Use camera port 1 (monochrome camera) for aruco
-    full_size = picam2.camera_properties["PixelArraySize"]
-    config = picam2.create_video_configuration(
-            main={"size": full_size, "format": "RGB888"},
-            buffer_count=1,
-            queue=False)
-            
-    picam2.configure(config)
-    controls = {
-    "ScalerCrop": (0, 0, *full_size),
-    "ExposureTime": exposure_time_mono,   # microseconds
-    "AnalogueGain": 1.0}
-    picam2.set_controls(controls)
-    picam2.start()
 
     camera_matrix = scale_camera_matrix(camera_matrix, s) # resizing the image below
     camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size[0], s*full_size[1]) # because frame is rotated below
@@ -1056,7 +1056,7 @@ def get_pose_from_arucomarker(pose_type, drone):
             rot_drone_to_ned = latest_attitude.copy()
             attitude_age = time.monotonic() - latest_attitude_time
 
-        frame = picam2.capture_array()
+        frame = picam2_ar.capture_array()
         height, width  = frame.shape[:2]
         frame = cv2.resize(frame, (int(s*width), int(s*height)))
         frame = cv2.rotate(frame, cv2.ROTATE_180)
