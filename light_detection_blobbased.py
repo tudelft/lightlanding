@@ -76,7 +76,6 @@ camera_matrix_rgb = np.array( [[1.13783006e+03, 0.00000000e+00, 9.99899908e+02],
 dist_coeffs_rgb = np.array(
  [-0.08491671, -0.09462636,  0.1612735,  -0.09637632])
 
-
 # camera_matrix_rgb_perspective = np.array(
 #  [[2.36184664e+03, 0.00000000e+00, 7.68344401e+02],
 #  [0.00000000e+00, 2.37450698e+03, 5.08886362e+02],
@@ -89,7 +88,6 @@ dist_coeffs_rgb = np.array(
 #   0.00000000e+00,  0.00000000e+00])
 
 s=0.6 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
-
 
 latest_attitude = None
 latest_attitude_time = None

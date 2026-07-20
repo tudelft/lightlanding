@@ -6,13 +6,14 @@ from mavsdk.offboard import OffboardError, VelocityNedYaw, PositionNedYaw
 from mavsdk.action import ActionError
 from light_detection_blobbased import get_latest_lighttarget_location, get_latest_arucotarget_location, get_latest_pose_from_lightmarker, get_latest_pose_from_arucomarker , get_pose_from_arucomarker, get_pose_from_lightmarker, attitude_loop
 import threading
+
 # =========================
 # CONFIG
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
-ENABLE_AUTONOMY = True   # MUST be set True manually
+ENABLE_AUTONOMY = False   # MUST be set to True manually. When False the drone will not move due to offboard control, but the code will still run and print debug info. This is useful for testing the vision system without risking a crash.
 TAKEOFF_ALT = 3.5       # meters (keep low for testing)
-MAX_VEL = 0.1             # m/s safety cap
+MAX_VEL = 0.5             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds
 TOTAL_TIMEOUT = 120        # seconds max mission time
 ARUCO_SWITCH_CRITERIA = [1.5, 1.5, 1.5]    # meters (distance to marker to switch from light-based to aruco-based TRACKING)
@@ -27,6 +28,20 @@ if (not MAVLINK_MULTIPLE_CONNECTIONS):
     serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
 else:
     serial_ip = "udpin://127.0.0.1:14600"  # UDP port for MAVLink connection
+
+
+async def connect_drone():
+    print("Connecting...")
+    drone = System()
+    await drone.connect(system_address=serial_ip)
+    print("Connecting...")
+    async for state in drone.core.connection_state():
+        if state.is_connected:
+            print("Connected")
+            return drone
+        else:
+            print("Waiting for connection...")
+            await asyncio.sleep(1)
 
 def start_aruco_tracker(pose_type, drone):
     """
@@ -67,6 +82,7 @@ async def print_drone_position(drone):
         print(f"y: {pos.position.east_m:.2f} m")
         print(f"z: {pos.position.down_m:.2f} m")
         print("---")
+
 async def get_current_position(drone):
      async for position in drone.telemetry.position_velocity_ned():
            return position.position    
@@ -146,63 +162,57 @@ async def stream_setpoints(drone, stop_signal):
         await asyncio.sleep(0.4) # Must be > 2Hz (0.5s max gap)
 
 async def run(stop_event, drone):
-    if not ENABLE_AUTONOMY:
-        print("AUTONOMY DISABLED (safety switch)")
-        return
-
     print("Waiting for local and home position health checks...")
 #    async for health in drone.telemetry.health():
 #        if health.is_local_position_ok and health.is_home_position_ok:
 #            break
 #        await asyncio.sleep(1)
 
-    # Start continuous background setpoint streaming
-    stop_streaming = asyncio.Event()
-    stream_task = asyncio.create_task(stream_setpoints(drone, stop_streaming))
+    if ENABLE_AUTONOMY:
+        # Start continuous background setpoint streaming
+        stop_streaming = asyncio.Event()
+        stream_task = asyncio.create_task(stream_setpoints(drone, stop_streaming))
     
     # Give PX4 a moment to register the initial stream
     await asyncio.sleep(0.5)
 
-    # 1. ARMING
-    print("Arming...")
-    try:
-        await drone.action.arm()
-        print("Armed.")
-    except ActionError as e:
-        print(f"Arming failed: {e}")
-        stop_streaming.set()
+    if ENABLE_AUTONOMY:
+        # 1. ARMING
+        print("Arming...")
+        try:
+            await drone.action.arm()
+            print("Armed.")
+        except ActionError as e:
+            print(f"Arming failed: {e}")
+            stop_streaming.set()
+            await stream_task
+            return
+
+        # 2. Switch to offboard
+        print("SWITCHING TO OFFBOARD MODE!")
+        try:
+            await drone.offboard.start()
+            print("Successfully in Offboard mode!")
+        except OffboardError as e:
+            print(f"Offboard start failed: {e._result.result}")
+            # Stop background loop and clean up safety if it fails
+            stop_streaming.set()
+            await stream_task
+            await drone.action.disarm()
+            return
+
+        # 3. TAKEOFF
+        print("Taking off...")
+        stop_streaming.set() # Stop the baseline holding stream
         await stream_task
-        return
-
-    # 2. Switch to offboard
-    print("SWITCHING TO OFFBOARD MODE!")
-    try:
-        await drone.offboard.start()
-        print("Successfully in Offboard mode!")
-    except OffboardError as e:
-        print(f"Offboard start failed: {e._result.result}")
-        # Stop background loop and clean up safety if it fails
-        stop_streaming.set()
-        await stream_task
-        await drone.action.disarm()
-        return
-
-    # 3. TAKEOFF
-
-    stop_streaming.set() # Stop the baseline holding stream
-    await stream_task
-
-    print("Taking off...")
-    # Command takeoff to 5 m
-    for i in range(150):
-        await drone.offboard.set_position_ned(
-            PositionNedYaw(0.0, 0.0, -1 * TAKEOFF_ALT, 0.0)
-        )
-        # await drone.action.set_takeoff_altitude(TAKEOFF_ALT)
-        # await drone.action.takeoff()
-    #    await print_drone_position(drone)
-#        time.sleep(0.2)
-        await asyncio.sleep(0.1)
+        # Command takeoff to 5 m
+        for i in range(150):
+            await drone.offboard.set_position_ned(
+                PositionNedYaw(0.0, 0.0, -1 * TAKEOFF_ALT, 0.0)
+            )
+            # await drone.action.set_takeoff_altitude(TAKEOFF_ALT)
+            # await drone.action.takeoff()
+            await asyncio.sleep(0.1)
         
     # 4. Transition to actual flight loop
     print("Beginning flight plan...")
@@ -213,9 +223,10 @@ async def run(stop_event, drone):
     # =========================
     print("Starting offboard hover...")
 #    await print_drone_position(drone)
-    await drone.offboard.set_velocity_ned(
-            VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
-        )
+    if ENABLE_AUTONOMY:
+        await drone.offboard.set_velocity_ned(
+                VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
+            )
 
     # =========================
     # STATE MACHINE
@@ -227,8 +238,8 @@ async def run(stop_event, drone):
     try:
         while True:
             print(f"STATE: {state}")
-            # await print_drone_position(drone)
             now = time.time()
+
             # safety timeout
             if now - start_time > TOTAL_TIMEOUT:
                 print("Mission timeout → landing")
@@ -239,9 +250,10 @@ async def run(stop_event, drone):
 
             elif state == "HOVER":
                 print('State HOVER, sending zero velocities')
-                await drone.offboard.set_velocity_ned(
-                    VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
-                )
+                if ENABLE_AUTONOMY:
+                    await drone.offboard.set_velocity_ned(
+                        VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
+                    )
 
             light_marker = get_lightmarker_offset(pose_type)
             if light_marker is not None:
@@ -270,9 +282,11 @@ async def run(stop_event, drone):
                     vx = max(min(vx, MAX_VEL), -MAX_VEL)
                     vy = max(min(vy, MAX_VEL), -MAX_VEL)
                     vz = max(min(vz, MAX_VEL), -MAX_VEL)
-                    await drone.offboard.set_velocity_ned(
-                        VelocityNedYaw(vx, vy, vz, 0.0)
-                    )
+
+                    if ENABLE_AUTONOMY:
+                        await drone.offboard.set_velocity_ned(
+                            VelocityNedYaw(vx, vy, vz, 0.0)
+                        )
 
                     print(f"Light-based TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
                 
@@ -300,32 +314,20 @@ async def run(stop_event, drone):
                         vx = max(min(vx, MAX_VEL), -MAX_VEL)
                         vy = max(min(vy, MAX_VEL), -MAX_VEL)
                         vz = max(min(vz, MAX_VEL), -MAX_VEL)
-                        await drone.offboard.set_velocity_ned(
-                            VelocityNedYaw(vx, vy, vz, 0.0)
-                        )
 
+                        if ENABLE_AUTONOMY:
+                            await drone.offboard.set_velocity_ned(
+                                VelocityNedYaw(vx, vy, vz, 0.0)
+                            )
                         print(f" Aruco TRACK vx={vx:.2f} vy={vy:.2f} vz={vz:.2f}")
 
                 else:
                     print("Aruco marker lost → HOVER")
                     state = "HOVER"
-                    await drone.offboard.set_velocity_ned(
-                        VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
-                    )
-
-
-
-            # else:
-            #     # =========================
-            #     # MARKER LOST → SAFE HOVER
-            #     # =========================
-            #     if now - last_seen > LOST_MARKER_TIMEOUT:
-            #         await drone.offboard.set_velocity_ned(
-            #             VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
-            #         )
-
-            #         print("Marker lost → HOLD (hover)")
-            #         state = "HOVER"
+                    if ENABLE_AUTONOMY:
+                        await drone.offboard.set_velocity_ned(
+                            VelocityNedYaw(0.0, 0.0, 0.0, 0.0)
+                        )
 
             await asyncio.sleep(0.05)  # 20 Hz control loop
 
@@ -335,58 +337,48 @@ async def run(stop_event, drone):
     # =========================
     # LANDING SEQUENCE
     # =========================
-    print("Landing...")
-    try:
-        await drone.action.land()
-        print("Landing command sent.")
-    except Exception as e:
-        print(f"Landing command failed: {e}")
-        return
+    if ENABLE_AUTONOMY:
+        # =========================
+        # LANDING SEQUENCE
+        # =========================
+        print("Landing...")
+        try:
+            await drone.action.land()
+            print("Landing command sent.")
+        except Exception as e:
+            print(f"Landing command failed: {e}")
+            return
 
-    # Wait until the drone is actually on the ground
-    print("Waiting for touchdown...")
-    try:
-        async for state in drone.telemetry.landed_state():
-            print(f"Landed state: {state}")
+        # Wait until the drone is actually on the ground
+        print("Waiting for touchdown...")
+        try:
+            async for state in drone.telemetry.landed_state():
+                print(f"Landed state: {state}")
 
-            if state == LandedState.ON_GROUND:
-                print("Drone is on the ground.")
-                break
+                if state == LandedState.ON_GROUND:
+                    print("Drone is on the ground.")
+                    break
 
-    except Exception as e:
-        print(f"Landing state monitoring failed: {e}")
-        return
+        except Exception as e:
+            print(f"Landing state monitoring failed: {e}")
+            return
 
-    # Now it is safe to leave Offboard mode
-    print("Stopping offboard...")
-    try:
-        await drone.offboard.stop()
-        print("Offboard stopped.")
-    except Exception as e:
-        print(f"Offboard stop failed: {e}")
+        # Now it is safe to leave Offboard mode
+        print("Stopping offboard...")
+        try:
+            await drone.offboard.stop()
+            print("Offboard stopped.")
+        except Exception as e:
+            print(f"Offboard stop failed: {e}")
 
-    # Disarm motors
-    print("Disarming...")
+        # Disarm motors
+        print("Disarming...")
 
-    try:
-        await drone.action.disarm()
-        print("Disarmed safely.")
-    except Exception as e:
-        print(f"Disarming failed: {e}")
-
-async def connect_drone():
-    print("Connecting...")
-    drone = System()
-    await drone.connect(system_address=serial_ip)
-    print("Connecting...")
-    async for state in drone.core.connection_state():
-        if state.is_connected:
-            print("Connected")
-            return drone
-        else:
-            print("Waiting for connection...")
-            await asyncio.sleep(1)
-
+        try:
+            await drone.action.disarm()
+            print("Disarmed safely.")
+        except Exception as e:
+            print(f"Disarming failed: {e}")
 
 async def main():
     stop_event = threading.Event()
