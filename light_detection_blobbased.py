@@ -238,7 +238,7 @@ def detect_lights_sendodometry(
        cv2.resizeWindow('Undistorted Image', 700, 700) 
 
     if (markertype == 'aruco'): # the mono camera is 180 degrees titled
-        camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size[0], s*full_size[1]) # because frame is rotated below
+        camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size_ar[0], s*full_size_ar[1]) # because frame is rotated below
         
     while True:
 #        time.sleep(1)
@@ -602,8 +602,8 @@ def detect_lights_sendodometry(
                         [ 0,  0,  1],
                     ])
             
-                    trans_marker_to_drone = rot_cam_to_drone @ trans_marker_to_cam # + trans_cam_to_drone
-                    trans_marker_to_ned = rot_drone_to_ned @ trans_marker_to_drone # + trans_drone_to_ned
+                    trans_marker_to_drone = rot_cam_to_drone @ trans_marker_to_cam + CAMERA_MONO_TO_BODY_FRD_M
+                    trans_marker_to_ned = rot_drone_to_ned @ trans_marker_to_drone
 
                     x, y, z = trans_marker_to_ned
                     text = f"ID {marker_id} MarkerLoc X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
@@ -712,6 +712,47 @@ latest_arucotarget_location = None
 latest_arucotarget_orientation = None
 latest_dronelocation_witharucotarget = None
 latest_droneorientation_witharucotarget = None
+
+vision_lock = threading.Lock()
+latest_lighttarget_timestamp = None
+latest_lighttarget_sequence = 0
+latest_arucotarget_timestamp = None
+latest_arucotarget_sequence = 0
+MAX_ATTITUDE_AGE_S = 0.15
+MAX_ARUCO_REPROJECTION_ERROR_PX = 3.0
+MAX_ARUCO_RANGE_M = 6.0
+CAMERA_RGB_TO_BODY_FRD_M = np.array([0.0, 0.0, 0.0])
+CAMERA_MONO_TO_BODY_FRD_M = np.array([0.0, 0.0, 0.0])
+
+def _publish_light_target(position, orientation, capture_time):
+    global latest_lighttarget_location, latest_lighttarget_orientation, latest_lighttarget_timestamp, latest_lighttarget_sequence
+    with vision_lock:
+        latest_lighttarget_location = np.asarray(position, dtype=float).copy()
+        latest_lighttarget_orientation = orientation
+        latest_lighttarget_timestamp = capture_time
+        latest_lighttarget_sequence += 1
+
+def _clear_light_target():
+    global latest_lighttarget_location, latest_lighttarget_orientation, latest_lighttarget_timestamp
+    with vision_lock:
+        latest_lighttarget_location = None
+        latest_lighttarget_orientation = None
+        latest_lighttarget_timestamp = None
+
+def _publish_aruco_target(position, orientation, capture_time):
+    global latest_arucotarget_location, latest_arucotarget_orientation, latest_arucotarget_timestamp, latest_arucotarget_sequence
+    with vision_lock:
+        latest_arucotarget_location = np.asarray(position, dtype=float).copy()
+        latest_arucotarget_orientation = orientation
+        latest_arucotarget_timestamp = capture_time
+        latest_arucotarget_sequence += 1
+
+def _clear_aruco_target():
+    global latest_arucotarget_location, latest_arucotarget_orientation, latest_arucotarget_timestamp
+    with vision_lock:
+        latest_arucotarget_location = None
+        latest_arucotarget_orientation = None
+        latest_arucotarget_timestamp = None
 
 from picamera2 import Picamera2
 picam2 = Picamera2(0)  # Use camera port 0 (RGB camera) for L-shape
@@ -991,8 +1032,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 
                 if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]):
                     if (pose_type == 'target'):
-                        latest_lighttarget_location = p
-                        latest_lighttarget_orientation = q
+                        _publish_light_target(p, q, time.monotonic())
                         # latest_dronelocation_withlighttarget = None
                         # latest_droneorientation_withlighttarget = None
 
@@ -1012,13 +1052,13 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 picam2_ar = Picamera2(1)
 full_size_ar = picam2_ar.camera_properties["PixelArraySize"]
 config_ar = picam2_ar.create_video_configuration(
-            main={"size": full_size, "format": "RGB888"},
+            main={"size": full_size_ar, "format": "RGB888"},
             buffer_count=1,
             queue=False)
 
 picam2_ar.configure(config_ar)
 controls_ar = {
-    "ScalerCrop": (0, 0, *full_size),
+    "ScalerCrop": (0, 0, *full_size_ar),
     "ExposureTime": exposure_time_mono,   # microseconds
     "AnalogueGain": 1.0}
 picam2_ar.set_controls(controls_ar)
@@ -1039,7 +1079,7 @@ def get_pose_from_arucomarker(pose_type, drone):
     cap = None
 
     camera_matrix = scale_camera_matrix(camera_matrix, s) # resizing the image below
-    camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size[0], s*full_size[1]) # because frame is rotated below
+    camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size_ar[0], s*full_size_ar[1]) # because frame is rotated below
         
     while True:
 #        time.sleep(1)
@@ -1134,8 +1174,7 @@ def get_pose_from_arucomarker(pose_type, drone):
                     cam_pos = p = trans_marker_to_ned
                     cam_orient_quat = q = [float('nan'), float('nan'), float('nan'), float('nan')]
 
-                    latest_arucotarget_location = p
-                    latest_arucotarget_orientation = q  
+                    _publish_aruco_target(p, q, time.monotonic())
                     
                 elif (pose_type == 'drone'):
                     R_wld_to_cam, _ = cv2.Rodrigues(rvec)
@@ -1171,14 +1210,24 @@ def get_pose_from_arucomarker(pose_type, drone):
                 latest_droneorientation_witharucotarget = None
 
 def get_latest_lighttarget_location():
-    global latest_lighttarget_location
-    global latest_lighttarget_orientation
-    return latest_lighttarget_location, latest_lighttarget_orientation
+    with vision_lock:
+        p = None if latest_lighttarget_location is None else latest_lighttarget_location.copy()
+        return p, latest_lighttarget_orientation
+
+def get_latest_lighttarget_measurement():
+    with vision_lock:
+        p = None if latest_lighttarget_location is None else latest_lighttarget_location.copy()
+        return p, latest_lighttarget_timestamp, latest_lighttarget_sequence
 
 def get_latest_arucotarget_location():
-    global latest_arucotarget_location
-    global latest_arucotarget_orientation
-    return latest_arucotarget_location, latest_arucotarget_orientation
+    with vision_lock:
+        p = None if latest_arucotarget_location is None else latest_arucotarget_location.copy()
+        return p, latest_arucotarget_orientation
+
+def get_latest_arucotarget_measurement():
+    with vision_lock:
+        p = None if latest_arucotarget_location is None else latest_arucotarget_location.copy()
+        return p, latest_arucotarget_timestamp, latest_arucotarget_sequence
 
 def get_latest_pose_from_lightmarker():
     global latest_dronelocation_withlighttarget
