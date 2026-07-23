@@ -22,10 +22,13 @@ from mavsdk import System
 from mavsdk.action import ActionError
 from mavsdk.offboard import OffboardError, PositionNedYaw, VelocityNedYaw
 from mavsdk.telemetry import LandedState
+from scipy.spatial.transform import Rotation as R
 
 from light_detection_blobbased import (
     attitude_loop,
     get_latest_arucotarget_measurement,
+    get_latest_drone_measurement_from_arucomarker,
+    get_latest_drone_measurement_from_lightmarker,
     get_latest_lighttarget_measurement,
     get_pose_from_arucomarker,
     get_pose_from_lightmarker,
@@ -68,6 +71,8 @@ VELOCITY_FILTER_ALPHA = 0.25
 ALIGN_RADIUS_M = 0.20
 ALIGN_SPEED_M_S = 0.30
 ALIGN_HOLD_TIME = 0.75
+MAX_LANDING_TILT_DEG = 10.0
+ORIENTATION_HOLD_TIME = 0.75
 ARUCO_TRACK_RANGE_M = 1.40
 FINAL_RANGE_START_M = 1.20
 LIGHT_ACQUISITION_RANGE_M = 1.25
@@ -138,17 +143,64 @@ class RelativePoseFilter:
 
 
 def latest_light_offset():
-    p, timestamp, sequence = get_latest_lighttarget_measurement()
+    if POSE_TYPE == "drone":
+        p, orientation, timestamp, sequence = get_latest_drone_measurement_from_lightmarker()
+        if p is None or timestamp is None or time.monotonic() - timestamp > MAX_VISION_AGE_S:
+            return None
+        # The drone-pose interface returns the vehicle pose in the marker frame.
+        # Convert it back into the relative marker offset that the controller
+        # expects.
+        return -np.asarray(p, dtype=float), orientation, timestamp, sequence
+
+    p, orientation, timestamp, sequence = get_latest_lighttarget_measurement()
     if p is None or timestamp is None or time.monotonic() - timestamp > MAX_VISION_AGE_S:
         return None
-    return np.asarray(p, dtype=float), timestamp, sequence
+    return np.asarray(p, dtype=float), orientation, timestamp, sequence
 
 
 def latest_aruco_offset():
-    p, timestamp, sequence = get_latest_arucotarget_measurement()
+    if POSE_TYPE == "drone":
+        p, orientation, timestamp, sequence = get_latest_drone_measurement_from_arucomarker()
+        if p is None or timestamp is None or time.monotonic() - timestamp > MAX_VISION_AGE_S:
+            return None
+        # The drone-pose interface returns the vehicle pose in the marker frame.
+        # Convert it back into the relative marker offset that the controller
+        # expects.
+        return -np.asarray(p, dtype=float), orientation, timestamp, sequence
+
+    p, orientation, timestamp, sequence = get_latest_arucotarget_measurement()
     if p is None or timestamp is None or time.monotonic() - timestamp > MAX_VISION_AGE_S:
         return None
-    return np.asarray(p, dtype=float), timestamp, sequence
+    return np.asarray(p, dtype=float), orientation, timestamp, sequence
+
+
+def platform_tilt_deg(marker_orientation, drone_to_ned):
+    """Angle between platform normal and drone down, for both pose modes."""
+    if marker_orientation is None or drone_to_ned is None:
+        return None
+    marker_orientation = np.asarray(marker_orientation, dtype=float)
+    drone_to_ned = np.asarray(drone_to_ned, dtype=float)
+    if drone_to_ned.shape != (3, 3):
+        return None
+    if not np.all(np.isfinite(marker_orientation)) or not np.all(np.isfinite(drone_to_ned)):
+        return None
+    if marker_orientation.shape == (4,):
+        # drone mode publishes q for drone-to-marker.
+        marker_to_ned = drone_to_ned @ R.from_quat(marker_orientation).as_matrix().T
+    elif marker_orientation.shape == (3, 3):
+        # target mode publishes marker-to-NED directly.
+        marker_to_ned = marker_orientation
+    else:
+        return None
+    cosine = float(np.dot(marker_to_ned[:, 2], drone_to_ned[:, 2]))
+    return float(np.degrees(np.arccos(np.clip(abs(cosine), 0.0, 1.0))))
+
+
+def latest_drone_to_ned():
+    import light_detection_blobbased as vision
+    if vision.latest_attitude is None:
+        return None
+    return np.asarray(vision.latest_attitude, dtype=float).copy()
 
 
 def start_aruco_tracker(drone):
@@ -272,14 +324,14 @@ async def run_mission(light_stop_event, drone):
         # it is used for control.  p_aruco = p_light + (aruco - light).
         light_position = light_velocity = None
         if light_raw is not None:
-            light_measurement, light_timestamp, _ = light_raw
+            light_measurement, light_orientation, light_timestamp, _ = light_raw
             light_position, light_velocity = light_filter.update(
                 light_measurement + LIGHT_TO_ARUCO_OFFSET_NED, light_timestamp
             )
 
         aruco_position = aruco_velocity = None
         if aruco_raw is not None:
-            aruco_measurement, aruco_timestamp, _ = aruco_raw
+            aruco_measurement, aruco_orientation, aruco_timestamp, _ = aruco_raw
             aruco_position, aruco_velocity = aruco_filter.update(aruco_measurement, aruco_timestamp)
             last_aruco_time = aruco_timestamp
 
@@ -326,12 +378,14 @@ async def run_mission(light_stop_event, drone):
                     await send_velocity(drone, np.zeros(3))
             else:
                 await send_velocity(drone, tracking_velocity(aruco_position, aruco_velocity))
-                if aruco_position[2] <= ARUCO_TRACK_RANGE_M and is_centered(aruco_position, aruco_velocity):
+                aruco_tilt = platform_tilt_deg(aruco_orientation, latest_drone_to_ned())
+                orientation_ok = aruco_tilt is not None and aruco_tilt <= MAX_LANDING_TILT_DEG
+                if aruco_position[2] <= ARUCO_TRACK_RANGE_M and is_centered(aruco_position, aruco_velocity) and orientation_ok:
                     aligned_since = aligned_since or now
-                    if now - aligned_since >= ALIGN_HOLD_TIME:
+                    if now - aligned_since >= max(ALIGN_HOLD_TIME, ORIENTATION_HOLD_TIME):
                         range_reference = min(float(aruco_position[2]), FINAL_RANGE_START_M)
                         state = "FINAL_DESCENT"
-                        print("ArUco alignment held: beginning tracked final descent.")
+                        print(f"ArUco alignment held at tilt {aruco_tilt:.1f} deg: beginning tracked final descent.")
                 else:
                     aligned_since = None
 
@@ -365,12 +419,17 @@ async def run_mission(light_stop_event, drone):
                 ))
                 if not is_centered(aruco_position, aruco_velocity):
                     command[2] = 0.0
+                aruco_tilt = platform_tilt_deg(aruco_orientation, latest_drone_to_ned())
+                if aruco_tilt is None or aruco_tilt > MAX_LANDING_TILT_DEG:
+                    command[2] = 0.0
 
                 await send_velocity(drone, command)
 
                 if (
                     aruco_position[2] <= TOUCHDOWN_RANGE_M
                     and is_centered(aruco_position, aruco_velocity)
+                    and aruco_tilt is not None
+                    and aruco_tilt <= MAX_LANDING_TILT_DEG
                 ):
                     await finish_landing(drone)
                     return

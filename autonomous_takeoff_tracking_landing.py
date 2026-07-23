@@ -59,6 +59,7 @@ def check_aruco_startcriteria_met(marker):
     mx, my, mz = marker
     if (abs(mx) < ARUCO_SWITCH_CRITERIA[0] + 1 and abs(my) < ARUCO_SWITCH_CRITERIA[1] + 1 and abs(mz) < ARUCO_SWITCH_CRITERIA[2] + 1):
         print("Aruco start criteria met → starting aruco tracker")
+        global aruco_started
         aruco_started = 1
         return True
     else:
@@ -266,6 +267,7 @@ async def run(stop_event, drone):
                 state = "HOVER"
 
             if state == "LIGHT_TRACK":
+                global aruco_started
                 if check_aruco_startcriteria_met(light_marker) and not aruco_started:
                     start_aruco_tracker(pose_type, drone)
 
