@@ -56,7 +56,7 @@ LIGHT_TO_ARUCO_OFFSET_NED = np.array([0.0, 0.0, 0.0], dtype=float) # optional, c
 # Begin looking for ArUco while light tracking once the landing marker is in this
 # box.  Do not hand over until ARUCO_STABLE_TIME has elapsed with valid ArUco data.
 ARUCO_START_BOX = np.array([1.5, 1.5, 1.5], dtype=float)
-ARUCO_STABLE_TIME = 0.75
+ARUCO_STABLE_TIME = 0.5
 ARUCO_LIGHT_AGREEMENT_M = 1.0  # meters: ArUco and light must agree within this distance to switch to ArUco control. If LIGHT_TO_ARUCO_OFFSET_NED is set, make this value lower (0.2-0.5).
 
 # Horizontal tracking, applied to the desired ArUco landing origin.
@@ -74,17 +74,17 @@ ALIGN_HOLD_TIME = 0.75
 MAX_LANDING_TILT_DEG = 10.0
 ORIENTATION_HOLD_TIME = 0.75
 ARUCO_TRACK_RANGE_M = 1.40
-FINAL_RANGE_START_M = 1.20
+FINAL_RANGE_START_M = 1.0
 LIGHT_ACQUISITION_RANGE_M = 1.25
 LIGHT_DESCENT_ALIGN_RADIUS_M = 0.60
 KP_LIGHT_Z = 0.45
-MAX_LIGHT_DESCENT_SPEED = 0.25
-TOUCHDOWN_RANGE_M = 0.4  # Must be validated against camera/landing-gear geometry.
+MAX_LIGHT_DESCENT_SPEED = 0.5
+TOUCHDOWN_RANGE_M = 0.3  # Must be validated against camera/landing-gear geometry.
 DESCENT_RATE_M_S = 0.2 # When in FINAL_DESCENT, the range reference is decremented at this rate.  The controller will try to follow it, but will not descend while off-center.
 KP_Z = 0.70
 KD_Z = 0.20
-MAX_DESCENT_SPEED = 0.25
-MAX_CLIMB_SPEED = 0.20
+MAX_DESCENT_SPEED = 0.5
+MAX_CLIMB_SPEED = 0.25
 
 # If vision is absent in final descent, never keep descending blind.
 LOST_MARKER_TIMEOUT = 0.35
