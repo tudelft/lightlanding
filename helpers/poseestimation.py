@@ -26,8 +26,8 @@ def get_endpoints_of_a_noisy_line(points):
     return end1, end2
 
 def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, dist_coeffs, drone_attitude_reliable = False, rot_drone_to_ned = None):
-    green_arm = fitered_circles[filteredcircles_avgcolor_sorted[:4]] #first 4 LEDs based on min avg intensity
-    amber_arm = fitered_circles[filteredcircles_avgcolor_sorted[4:]]  #other 4 LEDs based on min avg intensity
+    green_arm = fitered_circles[filteredcircles_avgcolor_sorted[:3]] #first 3 LEDs based on min avg intensity
+    amber_arm = fitered_circles[filteredcircles_avgcolor_sorted[3:]]  #other 4 LEDs based on min avg intensity
     
     green_circles_indices = green_arm[:,:2]
     amber_circles_indices = amber_arm[:,:2]
@@ -48,14 +48,22 @@ def pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new
     [amber_corners[0], amber_corners[1], green_corners[1], green_corners[0]],
     [amber_corners[1], amber_corners[0], green_corners[1], green_corners[0]]
     ], dtype=np.float32) 
-    
+
     # 3D object points in meters
     object_points = np.array([
-        [0.0,    0.0,    -0.230],  # corner, long amber+green arm, amber led
-        [0.375,   0.0,  -0.230],  # short arm, last amber led
-        [0.0,  -0.255,    0.0],  # long amber+green arm, first green led
-        [0.0,  -0.630,    0.0],  # long amber+green arm, last green led
+        [0.0,    0.0,    0],  # corner, amber led
+        [0.321,   0.0,  0.0],  # last amber led
+        [0.0,  -0.107,    0.0],  # first green led
+        [0.0,  -0.321,    0.0],  # last green led
     ], dtype=np.float32)
+
+    # # 3D object points in meters
+    # object_points = np.array([
+    #     [0.0,    0.0,    -0.230],  # corner, long amber+green arm, amber led
+    #     [0.375,   0.0,  -0.230],  # short arm, last amber led
+    #     [0.0,  -0.255,    0.0],  # long amber+green arm, first green led
+    #     [0.0,  -0.630,    0.0],  # long amber+green arm, last green led
+    # ], dtype=np.float32)
 
     min_reproj_error = float('inf')
     image_points_best_config = None

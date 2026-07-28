@@ -56,8 +56,8 @@ LIGHT_TO_ARUCO_OFFSET_NED = np.array([0.0, 0.0, 0.0], dtype=float) # optional, c
 # Begin looking for ArUco while light tracking once the landing marker is in this
 # box.  Do not hand over until ARUCO_STABLE_TIME has elapsed with valid ArUco data.
 ARUCO_START_BOX = np.array([1.5, 1.5, 1.5], dtype=float)
-ARUCO_STABLE_TIME = 0.5
-ARUCO_LIGHT_AGREEMENT_M = 1.0  # meters: ArUco and light must agree within this distance to switch to ArUco control. If LIGHT_TO_ARUCO_OFFSET_NED is set, make this value lower (0.2-0.5).
+ARUCO_STABLE_TIME = 0.25 # seconds: ArUco must be valid for this long before switching to ArUco control.
+ARUCO_LIGHT_AGREEMENT_M = 0.5  # meters: ArUco and light must agree within this distance to switch to ArUco control. If LIGHT_TO_ARUCO_OFFSET_NED is set, make this value lower (0.2-0.5).
 
 # Horizontal tracking, applied to the desired ArUco landing origin.
 KP_XY = 0.55
@@ -68,15 +68,16 @@ VELOCITY_FILTER_ALPHA = 0.25
 
 # Do not descend until the marker is well centered and its relative lateral
 # motion is manageable.  Keep following it whenever descent is paused.
+ARUCO_TRACK_RANGE_M = 1.40
+FINAL_RANGE_START_M = 1.0
+LIGHT_ACQUISITION_RANGE_M = 1.25
+LIGHT_DESCENT_ALIGN_RADIUS_M = 0.60
+
 ALIGN_RADIUS_M = 0.20
 ALIGN_SPEED_M_S = 0.30
 ALIGN_HOLD_TIME = 0.75
 MAX_LANDING_TILT_DEG = 10.0
 ORIENTATION_HOLD_TIME = 0.75
-ARUCO_TRACK_RANGE_M = 1.40
-FINAL_RANGE_START_M = 1.0
-LIGHT_ACQUISITION_RANGE_M = 1.25
-LIGHT_DESCENT_ALIGN_RADIUS_M = 0.60
 KP_LIGHT_Z = 0.45
 MAX_LIGHT_DESCENT_SPEED = 0.5
 TOUCHDOWN_RANGE_M = 0.3  # Must be validated against camera/landing-gear geometry.

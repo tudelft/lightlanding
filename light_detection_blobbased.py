@@ -417,7 +417,7 @@ def detect_lights_sendodometry(
                    y, x = np.ogrid[:h, :w]
                    inside_circle = (x-center[0])**2 + (y-center[1])**2 <= radius**2
                    led_mean = int(green_undistorted[inside_circle].mean())
-                   led_type = np.where(filteredcircles_avgcolor_sorted==led_count)[0] <= 3  #first 4 LEDs based on min avg intensity
+                   led_type = np.where(filteredcircles_avgcolor_sorted==led_count)[0] <= 2  #first 3 LEDs based on min avg intensity
                    ann_circle_color = (0,255,0) if (led_type==1) else (0,0,255)
                    
                    filteredcircles_avgcolor.append(led_mean)
@@ -452,7 +452,7 @@ def detect_lights_sendodometry(
     #            break
 
             # print(len(fitered_circles), "circles after line/radius filtering")
-            if (len(fitered_circles) == 8):
+            if (len(fitered_circles) == 7):
                 # print("Attempting pose estimation with", len(fitered_circles), "circles...")
                 image_points, object_points, pose_dict = pose_from_colored_leds(fitered_circles, filteredcircles_avgcolor_sorted, new_K, np.zeros((1, 4)), drone_attitude_reliable, rot_drone_to_ned)
 
@@ -481,7 +481,7 @@ def detect_lights_sendodometry(
 #                cv2.imshow("Annotated", annotated)              
 #                print(f"Detected LEDs: {led_count}")
 
-                if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
+                if (len(image_points)%7 == 0) and (len(image_points) == len(object_points)):
                     #pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
                     # print('Reprojection error:', pose_dict["reprojection_error"])
 #                    print('Reprojection error:', pose_dict["reprojection_error"])
@@ -959,7 +959,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 #            break
 
         # print(len(fitered_circles), "circles after line/radius filtering")
-        if (len(fitered_circles) == 8):
+        if (len(fitered_circles) == 7):
             if (pose_type == 'target'):
                 drone_attitude_reliable = True # if we are just trying to estimate the location of the light marker, we can use the drone's attitude to help with pose estimation
             elif (pose_type == 'drone'):
@@ -989,7 +989,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 #                cv2.imshow("Annotated", annotated)              
 #                print(f"Detected LEDs: {led_count}")
 
-            if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
+            if (len(image_points)%7 == 0) and (len(image_points) == len(object_points)):
                 #pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
                 # print('Reprojection error:', pose_dict["reprojection_error"])
                 print('Reprojection error:', pose_dict["reprojection_error"])
