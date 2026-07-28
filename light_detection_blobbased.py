@@ -24,7 +24,7 @@ from helpers.led_detection import filter_circles_same_line_similar_radius, cross
 USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
-MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
+MAVLINK_MULTIPLE_CONNECTIONS = False  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 if (not MAVLINK_MULTIPLE_CONNECTIONS):
     serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
@@ -34,9 +34,9 @@ else:
 rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
-markertype = 'aruco'  # 'Lshape' or 'aruco'
-show_visualization = False
-drone_attitude_reliable = True
+markertype = 'Lshape'  # 'Lshape' or 'aruco'
+show_visualization = True
+drone_attitude_reliable = False
 
 # L-shape marker setup
 radius_tol=0.5 
@@ -54,7 +54,7 @@ brightness_threshold = 35 # 60 for monochrome global shutter
 reproj_threshold = 5 # default 5
 
 # ArUco setup
-marker_size = 0.198   # meters
+marker_size = 0.120   # meters
 target_id = 0
 
 aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
@@ -394,7 +394,7 @@ def detect_lights_sendodometry(
             # fitered_circles = circles
             fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol, line_tol, min_group_size, cross_ratio_tol) #cr: 0.015
             filteredcircles_avgcolor = []
-#            print('filtered circles', len(fitered_circles))
+            print('filtered circles', len(fitered_circles))
 
             for circle in fitered_circles:    
                 center = (int(circle[0]), int(circle[1]))
@@ -481,7 +481,9 @@ def detect_lights_sendodometry(
 #                cv2.imshow("Annotated", annotated)              
 #                print(f"Detected LEDs: {led_count}")
 
-                if (len(image_points)%7 == 0) and (len(image_points) == len(object_points)):
+                print('len(image_points)', len(image_points))
+                print('len(object_points)', len(object_points))
+                if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
                     #pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
                     # print('Reprojection error:', pose_dict["reprojection_error"])
 #                    print('Reprojection error:', pose_dict["reprojection_error"])
@@ -989,7 +991,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 #                cv2.imshow("Annotated", annotated)              
 #                print(f"Detected LEDs: {led_count}")
 
-            if (len(image_points)%7 == 0) and (len(image_points) == len(object_points)):
+            if (len(image_points)%4 == 0) and (len(image_points) == len(object_points)):
                 #pose_dict = estimate_planar_pose(object_points, image_points, new_K, np.zeros((1, 4)))
                 # print('Reprojection error:', pose_dict["reprojection_error"])
                 print('Reprojection error:', pose_dict["reprojection_error"])
