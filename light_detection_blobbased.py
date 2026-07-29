@@ -777,25 +777,10 @@ picam2.set_controls(controls)
 picam2.start()
 
 def get_pose_from_lightmarker(stop_event, pose_type, drone,
-    brightness_threshold=None,
-    green_brightness_threshold=None,
-    amber_brightness_threshold=None,
-    green_amber_split: float = -0.03,
+    brightness_threshold,
     min_area: int = 1,
     max_area: int = 40000):
     # This function is similar to detect_lights_sendodometry but only returns the estimated pose without any MAVLink communication or visualization. It can be used for unit testing the pose estimation logic in isolation.
-
-    # Keep callers that still supply one brightness threshold working while
-    # allowing green and amber LEDs to be tuned independently.
-    if green_brightness_threshold is None:
-        green_brightness_threshold = brightness_threshold
-    if amber_brightness_threshold is None:
-        amber_brightness_threshold = brightness_threshold
-    if green_brightness_threshold is None or amber_brightness_threshold is None:
-        raise ValueError(
-            "Set green_brightness_threshold and amber_brightness_threshold "
-            "or provide brightness_threshold as a fallback."
-        )
 
     global camera_matrix_rgb, dist_coeffs_rgb
     global latest_lighttarget_location
@@ -815,12 +800,6 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
     if (show_visualization):
        cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Thresholded', 700, 700) 
-       cv2.namedWindow("Green mask", cv2.WINDOW_NORMAL)
-       cv2.resizeWindow("Green mask", 700, 700)
-
-       cv2.namedWindow("Amber mask", cv2.WINDOW_NORMAL)
-       cv2.resizeWindow("Amber mask", 700, 700)
-
 
        cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Annotated', 700, 700) 
@@ -853,7 +832,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         red = frame[:, :, 0]
         green = frame[:, :, 1]
 
-        diff_image_RG = red.astype(np.int16) - green.astype(np.int16)
+        green = diff_image_RG = red.astype(np.int16) - green.astype(np.int16)
 
         new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
         camera_matrix,
@@ -875,66 +854,53 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
             frame, map1, map2, interpolation=cv2.INTER_LINEAR)
 
         green_undistorted = cv2.remap(
-            diff_image_RG, map1, map2, interpolation=cv2.INTER_LINEAR)
+            green, map1, map2, interpolation=cv2.INTER_LINEAR)
 
 #            print('Searching for LEDs...')
         blurred = cv2.GaussianBlur(image_undistorted, blur_window, 0)
         annotated = blurred.copy()
         annotated_colors = blurred.copy()
+        blurred = cv2.cvtColor(blurred, cv2.COLOR_RGB2GRAY)
+        
+        # threshold for top 10%
+        brightness_mask = np.percentile(blurred, 90)
 
-        # Segment the two LED colors independently.  Normalizing the red-green
-        # difference makes the color split less sensitive to distance and
-        # overall illumination than a raw channel difference.
-        rgb = blurred.astype(np.float32)
-        red = rgb[:, :, 0]
-        green = rgb[:, :, 1]
-        rg_score = (red - green) / (red + green + 1.0)
+        # select pixels above threshold
+        top_pixels = blurred[blurred >= brightness_mask]
 
-        green_mask = (
-            (green >= green_brightness_threshold)
-            & (rg_score < green_amber_split)
-        ).astype(np.uint8) * 255
+        avg_top_10_intensities = np.mean(top_pixels)
+        # brightness_threshold = avg_top_10_intensities - 10
 
-        amber_brightness = (red + green) / 2.0
-        amber_mask = (
-            (amber_brightness >= amber_brightness_threshold)
-            & (rg_score >= green_amber_split)
-        ).astype(np.uint8) * 255
+        # Threshold bright regions (likely LEDs)
+        _, thresh = cv2.threshold(blurred, brightness_threshold, 255, cv2.THRESH_BINARY)
 
-        thresh = cv2.bitwise_or(green_mask, amber_mask)
+        # Clean up small noise
+        kernel = np.ones((3, 3), np.uint8)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_DILATE, kernel)
 
-        # Do not open or dilate the masks: distant LEDs may only occupy a few
-        # pixels, and expanding their masks makes neighboring blobs merge.
+        # Find contours of bright blobs
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # Extract each color independently so touching green and amber LEDs do
-        # not become one connected component in the combined overview mask.
-        green_contours, _ = cv2.findContours(
-            green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-        amber_contours, _ = cv2.findContours(
-            amber_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
+        circles = np.empty((0, 3), dtype=np.float32) 
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
 
-        circles = np.empty((0, 3), dtype=np.float32)
-        for contours in (green_contours, amber_contours):
-            for cnt in contours:
-                area = cv2.contourArea(cnt)
+            # Filter by size
+            if area < min_area or area > max_area:
+                continue
 
-                # Filter by size
-                if area < min_area or area > max_area:
-                    continue
+            # Find enclosing circle
+            (x, y), radius = cv2.minEnclosingCircle(cnt)
 
-                # Find enclosing circle
-                (x, y), radius = cv2.minEnclosingCircle(cnt)
+            # # Skip tiny detections
+            # if radius < 1:
+            #     continue
 
-                # # Skip tiny detections
-                # if radius < 1:
-                #     continue
+            center = (int(x), int(y))
+            # radius = int(radius)
 
-                center = (int(x), int(y))
-                # radius = int(radius)
-                circles = np.append(circles, [[x, y, radius]], axis=0)
-
+            circles = np.append(circles, [[x, y, radius]], axis=0)
 
 #            print('total circles', len(circles))
         # deterministic order
@@ -955,9 +921,6 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
             led_mean = int(green_undistorted[inside_circle].mean())
             filteredcircles_avgcolor.append(led_mean)
 
-        # This camera gives green LEDs a lower R-G response than amber LEDs.
-        # Sort ascending so pose_from_colored_leds() receives the three green
-        # indices first, followed by the four amber indices.
         filteredcircles_avgcolor_sorted = np.argsort(filteredcircles_avgcolor)
     
         if (show_visualization):
@@ -990,8 +953,6 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 
             ## Show images
             cv2.imshow("Thresholded", thresh)
-            cv2.imshow("Green mask", green_mask)
-            cv2.imshow("Amber mask", amber_mask)
             cv2.imshow("Annotated_colors", annotated_colors)
             cv2.waitKey(1)
 
