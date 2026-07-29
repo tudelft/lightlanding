@@ -892,13 +892,13 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 
         green_mask = (
             (green >= green_brightness_threshold)
-            & (rg_score >= green_amber_split)
+            & (rg_score < green_amber_split)
         ).astype(np.uint8) * 255
 
         amber_brightness = (red + green) / 2.0
         amber_mask = (
             (amber_brightness >= amber_brightness_threshold)
-            & (rg_score < green_amber_split)
+            & (rg_score >= green_amber_split)
         ).astype(np.uint8) * 255
 
         thresh = cv2.bitwise_or(green_mask, amber_mask)
@@ -955,10 +955,10 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
             led_mean = int(green_undistorted[inside_circle].mean())
             filteredcircles_avgcolor.append(led_mean)
 
-        # This camera gives green LEDs a higher R-G response than amber LEDs.
-        # Sort descending so pose_from_colored_leds() still receives the three
-        # green indices first, followed by the four amber indices.
-        filteredcircles_avgcolor_sorted = np.argsort(filteredcircles_avgcolor)[::-1]
+        # This camera gives green LEDs a lower R-G response than amber LEDs.
+        # Sort ascending so pose_from_colored_leds() receives the three green
+        # indices first, followed by the four amber indices.
+        filteredcircles_avgcolor_sorted = np.argsort(filteredcircles_avgcolor)
     
         if (show_visualization):
             led_count = 0

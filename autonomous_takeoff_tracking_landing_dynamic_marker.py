@@ -99,7 +99,7 @@ COMMAND_YAW_DEG = 0.0
 # thresholds because their camera responses are not equally strong.
 GREEN_BRIGHTNESS_THRESHOLD = 25
 AMBER_BRIGHTNESS_THRESHOLD = 40
-GREEN_AMBER_SPLIT = -0.03
+GREEN_AMBER_SPLIT = -0.405
 POSE_TYPE = "target"
 
 SERIAL_IP = "serial:///dev/ttyACM0:115200" if not MAVLINK_MULTIPLE_CONNECTIONS else "udpin://127.0.0.1:14600"
