@@ -815,6 +815,12 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
     if (show_visualization):
        cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Thresholded', 700, 700) 
+       cv2.namedWindow("Green mask", cv2.WINDOW_NORMAL)
+       cv2.resizeWindow("Green mask", 700, 700)
+
+       cv2.namedWindow("Amber mask", cv2.WINDOW_NORMAL)
+       cv2.resizeWindow("Amber mask", 700, 700)
+
 
        cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
        cv2.resizeWindow('Annotated', 700, 700) 
@@ -882,21 +888,17 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         rgb = blurred.astype(np.float32)
         red = rgb[:, :, 0]
         green = rgb[:, :, 1]
-        blue = rgb[:, :, 2]
         rg_score = (red - green) / (red + green + 1.0)
 
         green_mask = (
             (green >= green_brightness_threshold)
             & (rg_score < green_amber_split)
-            & (green > blue)
         ).astype(np.uint8) * 255
 
         amber_brightness = (red + green) / 2.0
         amber_mask = (
             (amber_brightness >= amber_brightness_threshold)
             & (rg_score >= green_amber_split)
-            & (red > blue)
-            & (green > blue)
         ).astype(np.uint8) * 255
 
         thresh = cv2.bitwise_or(green_mask, amber_mask)
@@ -904,28 +906,35 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         # Do not open or dilate the masks: distant LEDs may only occupy a few
         # pixels, and expanding their masks makes neighboring blobs merge.
 
-        # Find contours of bright blobs
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Extract each color independently so touching green and amber LEDs do
+        # not become one connected component in the combined overview mask.
+        green_contours, _ = cv2.findContours(
+            green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        amber_contours, _ = cv2.findContours(
+            amber_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
 
-        circles = np.empty((0, 3), dtype=np.float32) 
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
+        circles = np.empty((0, 3), dtype=np.float32)
+        for contours in (green_contours, amber_contours):
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
 
-            # Filter by size
-            if area < min_area or area > max_area:
-                continue
+                # Filter by size
+                if area < min_area or area > max_area:
+                    continue
 
-            # Find enclosing circle
-            (x, y), radius = cv2.minEnclosingCircle(cnt)
+                # Find enclosing circle
+                (x, y), radius = cv2.minEnclosingCircle(cnt)
 
-            # # Skip tiny detections
-            # if radius < 1:
-            #     continue
+                # # Skip tiny detections
+                # if radius < 1:
+                #     continue
 
-            center = (int(x), int(y))
-            # radius = int(radius)
+                center = (int(x), int(y))
+                # radius = int(radius)
+                circles = np.append(circles, [[x, y, radius]], axis=0)
 
-            circles = np.append(circles, [[x, y, radius]], axis=0)
 
 #            print('total circles', len(circles))
         # deterministic order
@@ -978,6 +987,8 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 
             ## Show images
             cv2.imshow("Thresholded", thresh)
+            cv2.imshow("Green mask", green_mask)
+            cv2.imshow("Amber mask", amber_mask)
             cv2.imshow("Annotated_colors", annotated_colors)
             cv2.waitKey(1)
 
