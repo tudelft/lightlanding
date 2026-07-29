@@ -95,7 +95,11 @@ ABORT_CLIMB_SPEED = 0.20
 # use the heading you have validated for this vehicle, rather than assuming that
 # the marker orientation is available from the current target-pose interface.
 COMMAND_YAW_DEG = 0.0
-BRIGHTNESS_THRESHOLD = 32
+# RGB LED segmentation.  The two LED colors need different brightness
+# thresholds because their camera responses are not equally strong.
+GREEN_BRIGHTNESS_THRESHOLD = 25
+AMBER_BRIGHTNESS_THRESHOLD = 40
+GREEN_AMBER_SPLIT = -0.03
 POSE_TYPE = "target"
 
 SERIAL_IP = "serial:///dev/ttyACM0:115200" if not MAVLINK_MULTIPLE_CONNECTIONS else "udpin://127.0.0.1:14600"
@@ -448,7 +452,9 @@ async def main():
             "stop_event": light_stop_event,
             "pose_type": POSE_TYPE,
             "drone": drone,
-            "brightness_threshold": BRIGHTNESS_THRESHOLD,
+            "green_brightness_threshold": GREEN_BRIGHTNESS_THRESHOLD,
+            "amber_brightness_threshold": AMBER_BRIGHTNESS_THRESHOLD,
+            "green_amber_split": GREEN_AMBER_SPLIT,
         },
         daemon=True,
     ).start()
