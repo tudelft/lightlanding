@@ -35,7 +35,7 @@ rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization = False
+show_visualization = True
 drone_attitude_reliable = True
 
 # L-shape marker setup
@@ -45,7 +45,7 @@ min_group_size=4
 cross_ratio_tol=0.025
 
 # Camera setup
-blur_window = (9, 9) # (9, 9) for monochrome global shutter
+blur_window = (1, 1) # (9, 9) for monochrome global shutter
 exposure_time_rgb = 5000 # microseconds
 exposure_time_mono = 20000 # microseconds
 
@@ -933,7 +933,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                 y, x = np.ogrid[:h, :w]
                 inside_circle = (x-center[0])**2 + (y-center[1])**2 <= radius**2
                 led_mean = int(green_undistorted[inside_circle].mean())
-                led_type = np.where(filteredcircles_avgcolor_sorted==led_count)[0] <= 3  #first 4 LEDs based on min avg intensity
+                led_type = np.where(filteredcircles_avgcolor_sorted==led_count)[0] <= 2  #first 4 LEDs based on min avg intensity
                 ann_circle_color = (0,255,0) if (led_type==1) else (0,0,255)
                 
                 filteredcircles_avgcolor.append(led_mean)

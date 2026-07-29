@@ -38,8 +38,8 @@ from light_detection_blobbased import (
 # =========================
 # CONFIGURATION
 # =========================
-MAVLINK_MULTIPLE_CONNECTIONS = True
-ENABLE_AUTONOMY = True  # Change manually only after restrained/bench tests.
+MAVLINK_MULTIPLE_CONNECTIONS = False
+ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
 TAKEOFF_ALT = 4.5
 TOTAL_TIMEOUT = 120.0
 CONTROL_PERIOD = 0.05
@@ -95,15 +95,13 @@ ABORT_CLIMB_SPEED = 0.20
 # use the heading you have validated for this vehicle, rather than assuming that
 # the marker orientation is available from the current target-pose interface.
 COMMAND_YAW_DEG = 0.0
-BRIGHTNESS_THRESHOLD = 35
+BRIGHTNESS_THRESHOLD = 32
 POSE_TYPE = "target"
 
-SERIAL_IP = "/dev/ttyACM0" if not MAVLINK_MULTIPLE_CONNECTIONS else "udpin://127.0.0.1:14600"
-
+SERIAL_IP = "serial:///dev/ttyACM0:115200" if not MAVLINK_MULTIPLE_CONNECTIONS else "udpin://127.0.0.1:14600"
 
 def clip(value, limit):
     return float(np.clip(value, -limit, limit))
-
 
 class RelativePoseFilter:
     """Low-pass position and finite-difference relative-velocity estimator."""
