@@ -11,7 +11,7 @@ import threading
 # CONFIG
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
-ENABLE_AUTONOMY = False   # MUST be set to True manually. When False the drone will not move due to offboard control, but the code will still run and print debug info. This is useful for testing the vision system without risking a crash.
+ENABLE_AUTONOMY = True   # MUST be set to True manually. When False the drone will not move due to offboard control, but the code will still run and print debug info. This is useful for testing the vision system without risking a crash.
 TAKEOFF_ALT = 3.5       # meters (keep low for testing)
 MAX_VEL = 0.5             # m/s safety cap
 LOST_MARKER_TIMEOUT = 1.0 # seconds

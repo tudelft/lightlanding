@@ -39,8 +39,8 @@ from light_detection_blobbased import (
 # CONFIGURATION
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = True
-ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
-TAKEOFF_ALT = 3.5
+ENABLE_AUTONOMY = True  # Change manually only after restrained/bench tests.
+TAKEOFF_ALT = 4.5
 TOTAL_TIMEOUT = 120.0
 CONTROL_PERIOD = 0.05
 MAX_VISION_AGE_S = 0.20
@@ -272,7 +272,7 @@ async def prepare_offboard_and_takeoff(drone):
     except (ActionError, OffboardError) as error:
         raise RuntimeError(f"Could not arm/start Offboard: {error}") from error
 
-    for _ in range(100):
+    for _ in range(180):
         await drone.offboard.set_position_ned(
             PositionNedYaw(0.0, 0.0, -TAKEOFF_ALT, COMMAND_YAW_DEG)
         )
