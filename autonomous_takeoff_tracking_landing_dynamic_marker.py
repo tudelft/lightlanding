@@ -38,8 +38,8 @@ from light_detection_blobbased import (
 # =========================
 # CONFIGURATION
 # =========================
-MAVLINK_MULTIPLE_CONNECTIONS = True
-ENABLE_AUTONOMY = True  # Change manually only after restrained/bench tests.
+MAVLINK_MULTIPLE_CONNECTIONS = False
+ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
 TAKEOFF_ALT = 4.2
 TOTAL_TIMEOUT = 120.0
 CONTROL_PERIOD = 0.05
@@ -443,6 +443,7 @@ async def run_mission(light_stop_event, drone):
 async def main():
     light_stop_event = threading.Event()
     drone = await connect_drone()
+    start_aruco_tracker(drone) # for debugging, but not used until the light tracking is in range
     asyncio.create_task(attitude_loop(drone))
     await asyncio.sleep(2.0)  # Wait for attitude needed by pose_type="target".
 

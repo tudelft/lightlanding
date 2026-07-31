@@ -23,20 +23,16 @@ from helpers.led_detection import filter_circles_same_line_similar_radius, cross
 # =========================
 USE_VIDEO_FILE = False          # True = read from video, False = use RPi camera
 VIDEO_PATH = "lightrecordingLshape.mp4" # Path to video file when USE_VIDEO_FILE=True
+
 CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odometry messages
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
-if (not MAVLINK_MULTIPLE_CONNECTIONS):
-    serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
-else:
-    serial_ip = "udp:127.0.0.1:14600"  # UDP port for MAVLink connection
+markertype = 'Lshape'  # 'Lshape' or 'aruco'
+show_visualization = True
+drone_attitude_reliable = True
 
 rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
-
-markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization = False
-drone_attitude_reliable = True
 
 # L-shape marker setup
 radius_tol=0.5 
@@ -56,8 +52,13 @@ reproj_threshold = 5 # default 5
 # ArUco setup
 marker_size = 0.120   # meters
 target_id = 0
-
 aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+
+if (not MAVLINK_MULTIPLE_CONNECTIONS):
+    serial_ip = "/dev/ttyACM0"  # Serial port for MAVLink connection
+else:
+    serial_ip = "udp:127.0.0.1:14600"  # UDP port for MAVLink connection
+
 detector_params = cv2.aruco.DetectorParameters()
 detector = cv2.aruco.ArucoDetector(aruco_dict, detector_params)
   
@@ -1062,18 +1063,30 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                         print('Setting light target and drone location to None, marker not found')
 
 picam2_ar = Picamera2(1)
+print(picam2_ar.sensor_modes)  # Confirm that Y8 is supported
 full_size_ar = picam2_ar.camera_properties["PixelArraySize"]
 config_ar = picam2_ar.create_video_configuration(
-            main={"size": full_size_ar, "format": "RGB888"},
-            buffer_count=1,
-            queue=False)
+    main={
+        "size": full_size_ar,
+        "format": "Y8",
+    },
+    buffer_count=2,
+    queue=False,
+)
 
 picam2_ar.configure(config_ar)
-controls_ar = {
+picam2_ar.set_controls({
     "ScalerCrop": (0, 0, *full_size_ar),
-    "ExposureTime": exposure_time_mono,   # microseconds
-    "AnalogueGain": 1.0}
-picam2_ar.set_controls(controls_ar)
+
+    "AeEnable": True,
+    "AeExposureMode": controls.AeExposureModeEnum.Short,
+    "AeMeteringMode": controls.AeMeteringModeEnum.CentreWeighted,
+    # Allow AE, but prevent very long exposures.
+    "FrameDurationLimits": (2_000, 10_000),
+    # Bias darker to reduce white-cell saturation at close range.
+    "ExposureValue": -1.0,
+})
+
 picam2_ar.start()
 
 def get_pose_from_arucomarker(pose_type, drone):
