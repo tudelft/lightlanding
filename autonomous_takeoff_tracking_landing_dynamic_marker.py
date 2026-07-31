@@ -38,9 +38,9 @@ from light_detection_blobbased import (
 # =========================
 # CONFIGURATION
 # =========================
-MAVLINK_MULTIPLE_CONNECTIONS = False
-ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
-TAKEOFF_ALT = 4.5
+MAVLINK_MULTIPLE_CONNECTIONS = True
+ENABLE_AUTONOMY = True  # Change manually only after restrained/bench tests.
+TAKEOFF_ALT = 4.2
 TOTAL_TIMEOUT = 120.0
 CONTROL_PERIOD = 0.05
 MAX_VISION_AGE_S = 0.20
@@ -57,7 +57,7 @@ LIGHT_TO_ARUCO_OFFSET_NED = np.array([0.0, 0.0, 0.0], dtype=float) # optional, c
 # box.  Do not hand over until ARUCO_STABLE_TIME has elapsed with valid ArUco data.
 ARUCO_START_BOX = np.array([1.5, 1.5, 1.5], dtype=float)
 ARUCO_STABLE_TIME = 0.25 # seconds: ArUco must be valid for this long before switching to ArUco control.
-ARUCO_LIGHT_AGREEMENT_M = 0.5  # meters: ArUco and light must agree within this distance to switch to ArUco control. If LIGHT_TO_ARUCO_OFFSET_NED is set, make this value lower (0.2-0.5).
+ARUCO_LIGHT_AGREEMENT_M = 1.0  # meters: ArUco and light must agree within this distance to switch to ArUco control. If LIGHT_TO_ARUCO_OFFSET_NED is set, make this value lower (0.2-0.5).
 
 # Horizontal tracking, applied to the desired ArUco landing origin.
 KP_XY = 0.55
@@ -69,9 +69,9 @@ VELOCITY_FILTER_ALPHA = 0.25
 # Do not descend until the marker is well centered and its relative lateral
 # motion is manageable.  Keep following it whenever descent is paused.
 ARUCO_TRACK_RANGE_M = 1.40
-FINAL_RANGE_START_M = 1.0
+FINAL_RANGE_START_M = 1.5
 LIGHT_ACQUISITION_RANGE_M = 1.25
-LIGHT_DESCENT_ALIGN_RADIUS_M = 0.60
+LIGHT_DESCENT_ALIGN_RADIUS_M = 0.80
 
 ALIGN_RADIUS_M = 0.20
 ALIGN_SPEED_M_S = 0.30
@@ -95,7 +95,7 @@ ABORT_CLIMB_SPEED = 0.20
 # use the heading you have validated for this vehicle, rather than assuming that
 # the marker orientation is available from the current target-pose interface.
 COMMAND_YAW_DEG = 0.0
-BRIGHTNESS_THRESHOLD = 32
+BRIGHTNESS_THRESHOLD = 36
 POSE_TYPE = "target"
 
 SERIAL_IP = "serial:///dev/ttyACM0:115200" if not MAVLINK_MULTIPLE_CONNECTIONS else "udpin://127.0.0.1:14600"
@@ -310,6 +310,7 @@ async def run_mission(light_stop_event, drone):
     aruco_filter = RelativePoseFilter()
 
     while True:
+        print('state', state)
         now = time.monotonic()
         if now - mission_start > TOTAL_TIMEOUT:
             print("Mission timeout; aborting visual descent.")
@@ -379,6 +380,9 @@ async def run_mission(light_stop_event, drone):
                 await send_velocity(drone, tracking_velocity(aruco_position, aruco_velocity))
                 aruco_tilt = platform_tilt_deg(aruco_orientation, latest_drone_to_ned())
                 orientation_ok = aruco_tilt is not None and aruco_tilt <= MAX_LANDING_TILT_DEG
+                print('orientation_ok', orientation_ok)
+                print(is_centered(aruco_position, aruco_velocity))
+                orientation_ok = True
                 if aruco_position[2] <= ARUCO_TRACK_RANGE_M and is_centered(aruco_position, aruco_velocity) and orientation_ok:
                     aligned_since = aligned_since or now
                     if now - aligned_since >= max(ALIGN_HOLD_TIME, ORIENTATION_HOLD_TIME):

@@ -35,7 +35,7 @@ rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization = True
+show_visualization = False
 drone_attitude_reliable = True
 
 # L-shape marker setup
@@ -45,7 +45,7 @@ min_group_size=4
 cross_ratio_tol=0.025
 
 # Camera setup
-blur_window = (1, 1) # (9, 9) for monochrome global shutter
+blur_window = (5, 5) # (9, 9) for monochrome global shutter
 exposure_time_rgb = 5000 # microseconds
 exposure_time_mono = 20000 # microseconds
 
@@ -87,7 +87,7 @@ dist_coeffs_rgb = np.array(
 #   0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  0.00000000e+00,
 #   0.00000000e+00,  0.00000000e+00])
 
-s=0.6 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
+s=0.9 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
 
 latest_attitude = None
 latest_attitude_time = None
