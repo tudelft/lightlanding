@@ -725,6 +725,7 @@ latest_lighttarget_timestamp = None
 latest_lighttarget_sequence = 0
 latest_arucotarget_timestamp = None
 latest_arucotarget_sequence = 0
+latest_arucotarget_id = None
 MAX_ATTITUDE_AGE_S = 0.15
 MAX_ARUCO_REPROJECTION_ERROR_PX = 3.0
 MAX_ARUCO_RANGE_M = 6.0
@@ -738,6 +739,7 @@ def _publish_light_target(position, orientation, capture_time):
         latest_lighttarget_orientation = orientation
         latest_lighttarget_timestamp = capture_time
         latest_lighttarget_sequence += 1
+        flight_logging.flight_logger.log("light_pose", position=position)
 
 def _clear_light_target():
     global latest_lighttarget_location, latest_lighttarget_orientation, latest_lighttarget_timestamp
@@ -746,22 +748,30 @@ def _clear_light_target():
         latest_lighttarget_orientation = None
         latest_lighttarget_timestamp = None
 
-def _publish_aruco_target(position, orientation, capture_time):
-    global latest_arucotarget_location, latest_arucotarget_orientation, latest_arucotarget_timestamp, latest_arucotarget_sequence
+def _publish_aruco_target(position, orientation, capture_time, marker_id=None):
+    global latest_arucotarget_location, latest_arucotarget_orientation, latest_arucotarget_timestamp, latest_arucotarget_sequence, latest_arucotarget_id
     with vision_lock:
         latest_arucotarget_location = np.asarray(position, dtype=float).copy()
         latest_arucotarget_orientation = orientation
         latest_arucotarget_timestamp = capture_time
         latest_arucotarget_sequence += 1
+        latest_arucotarget_id = marker_id
+        flight_logging.flight_logger.log("aruco_pose", position=position, marker_id=marker_id)
 
 def _clear_aruco_target():
-    global latest_arucotarget_location, latest_arucotarget_orientation, latest_arucotarget_timestamp
+    global latest_arucotarget_location, latest_arucotarget_orientation, latest_arucotarget_timestamp, latest_arucotarget_id
     with vision_lock:
         latest_arucotarget_location = None
         latest_arucotarget_orientation = None
         latest_arucotarget_timestamp = None
+        latest_arucotarget_id = None
+
+def get_latest_arucotarget_id():
+    with vision_lock:
+        return latest_arucotarget_id
 
 from picamera2 import Picamera2
+import flight_logging
 picam2 = Picamera2(0)  # Use camera port 0 (RGB camera) for L-shape
 full_size = picam2.camera_properties["PixelArraySize"]
 config = picam2.create_video_configuration(
@@ -779,8 +789,8 @@ picam2.start()
 
 def get_pose_from_lightmarker(stop_event, pose_type, drone,
     brightness_threshold,
-    min_area: int = 1,
-    max_area: int = 40000):
+    min_area: int = 80,
+    max_area: int = 12000):
     # This function is similar to detect_lights_sendodometry but only returns the estimated pose without any MAVLink communication or visualization. It can be used for unit testing the pose estimation logic in isolation.
 
     global camera_matrix_rgb, dist_coeffs_rgb
@@ -962,6 +972,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 #            break
 
         # print(len(fitered_circles), "circles after line/radius filtering")
+        flight_logging.flight_logger.save_image("light_leds", annotated_colors)
         if (len(fitered_circles) == 7):
             if (pose_type == 'target'):
                 drone_attitude_reliable = True # if we are just trying to estimate the location of the light marker, we can use the drone's attitude to help with pose estimation
@@ -1071,7 +1082,7 @@ config_ar = picam2_ar.create_video_configuration(
         "size": full_size_ar,
         "format": "RGB888",
     },
-    buffer_count=2,
+    buffer_count=1,
     queue=False,
 )
 
@@ -1090,7 +1101,7 @@ picam2_ar.set_controls({
 
 picam2_ar.start()
 
-def get_pose_from_arucomarker(pose_type, drone):
+def get_pose_from_arucomarker(pose_type, drone, acquisition_marker_id=None, acquisition_marker_size_m=None):
     global camera_matrix_mono
     global dist_coeffs_mono
 
@@ -1158,13 +1169,21 @@ def get_pose_from_arucomarker(pose_type, drone):
         print('Found ids', ids)
         if ids is not None:
             ids = ids.flatten()
+            if target_id in ids:
+                selected_marker_id = target_id
+                selected_marker_size = marker_size
+            elif acquisition_marker_id is not None and acquisition_marker_id in ids:
+                selected_marker_id = acquisition_marker_id
+                selected_marker_size = acquisition_marker_size_m
+            else:
+                selected_marker_id = None
 
             for i, marker_id in enumerate(ids):
-                if marker_id == target_id:
+                if marker_id == selected_marker_id:
                     aruco_marker_found = True
                     rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(
                         [corners[i]],
-                        marker_size,
+                        selected_marker_size,
                         new_K,
                         np.zeros(4)
                     )
@@ -1177,6 +1196,7 @@ def get_pose_from_arucomarker(pose_type, drone):
                         cv2.aruco.drawDetectedMarkers(image_undistorted_ar, corners, ids)
                         cv2.drawFrameAxes(image_undistorted_ar, new_K, np.zeros(4), rvec, tvec, 0.05)
                         cv2.waitKey(1)
+                        flight_logging.flight_logger.save_image("aruco", image_undistorted_ar)
 
 #            if (show_visualization):
 #                cv2.imshow("Undistorted Image", image_undistorted)
@@ -1202,7 +1222,7 @@ def get_pose_from_arucomarker(pose_type, drone):
                     cam_pos = p = trans_marker_to_ned
                     cam_orient_quat = q = rot_drone_to_ned @ rot_cam_to_drone @ R_wld_to_cam
 
-                    _publish_aruco_target(p, q, time.monotonic())
+                    _publish_aruco_target(p, q, time.monotonic(), marker_id)
                     
                 elif (pose_type == 'drone'):
                     R_wld_to_cam, _ = cv2.Rodrigues(rvec)
