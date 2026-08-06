@@ -443,9 +443,9 @@ async def run_mission(light_stop_event, drone):
 async def main():
     light_stop_event = threading.Event()
     drone = await connect_drone()
-    start_aruco_tracker(drone) # for debugging, but not used until the light tracking is in range
     asyncio.create_task(attitude_loop(drone))
     await asyncio.sleep(2.0)  # Wait for attitude needed by pose_type="target".
+    start_aruco_tracker(drone) # for debugging, but not used until the light tr>
 
     threading.Thread(
         target=get_pose_from_lightmarker,

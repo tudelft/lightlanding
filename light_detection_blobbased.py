@@ -1062,13 +1062,14 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                         latest_dronelocation_withlighttarget_timestamp = None
                         print('Setting light target and drone location to None, marker not found')
 
+import libcamera
 picam2_ar = Picamera2(1)
 print(picam2_ar.sensor_modes)  # Confirm that Y8 is supported
 full_size_ar = picam2_ar.camera_properties["PixelArraySize"]
 config_ar = picam2_ar.create_video_configuration(
     main={
         "size": full_size_ar,
-        "format": "Y8",
+        "format": "RGB888",
     },
     buffer_count=2,
     queue=False,
@@ -1079,8 +1080,8 @@ picam2_ar.set_controls({
     "ScalerCrop": (0, 0, *full_size_ar),
 
     "AeEnable": True,
-    "AeExposureMode": controls.AeExposureModeEnum.Short,
-    "AeMeteringMode": controls.AeMeteringModeEnum.CentreWeighted,
+    "AeExposureMode": libcamera.controls.AeExposureModeEnum.Short,
+    "AeMeteringMode": libcamera.controls.AeMeteringModeEnum.CentreWeighted,
     # Allow AE, but prevent very long exposures.
     "FrameDurationLimits": (2_000, 10_000),
     # Bias darker to reduce white-cell saturation at close range.
@@ -1121,13 +1122,13 @@ def get_pose_from_arucomarker(pose_type, drone):
             rot_drone_to_ned = latest_attitude.copy()
             attitude_age = time.monotonic() - latest_attitude_time
 
-        frame = picam2_ar.capture_array()
-        height, width  = frame.shape[:2]
-        frame = cv2.resize(frame, (int(s*width), int(s*height)))
-        frame = cv2.rotate(frame, cv2.ROTATE_180)
-        green = frame[:, :, 1]
+        frame_ar = picam2_ar.capture_array()
+        height, width  = frame_ar.shape[:2]
+        frame_ar = cv2.resize(frame_ar, (int(s*width), int(s*height)))
+        frame_ar = cv2.rotate(frame_ar, cv2.ROTATE_180)
+        green_ar = frame_ar[:, :, 1]
 
-        h, w = frame.shape[:2]        
+        h, w = frame_ar.shape[:2]        
         new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
         camera_matrix,
         dist_coeffs,
@@ -1144,20 +1145,19 @@ def get_pose_from_arucomarker(pose_type, drone):
             cv2.CV_16SC2,
         )
         
-        image_undistorted = cv2.remap(
-            frame, map1, map2, interpolation=cv2.INTER_LINEAR)
+        image_undistorted_ar = cv2.remap(
+            frame_ar, map1, map2, interpolation=cv2.INTER_LINEAR)
 
-        green_undistorted = cv2.remap(
-            green, map1, map2, interpolation=cv2.INTER_LINEAR)
+        green_undistorted_ar = cv2.remap(
+            green_ar, map1, map2, interpolation=cv2.INTER_LINEAR)
 
         ### ARUCO Detection
         aruco_marker_found = False
         print('Looking for Aruco')
-        corners, ids, _ = detector.detectMarkers(image_undistorted)
+        corners, ids, _ = detector.detectMarkers(image_undistorted_ar)
         print('Found ids', ids)
         if ids is not None:
             ids = ids.flatten()
-            cv2.aruco.drawDetectedMarkers(image_undistorted, corners, ids)
 
             for i, marker_id in enumerate(ids):
                 if marker_id == target_id:
@@ -1173,13 +1173,14 @@ def get_pose_from_arucomarker(pose_type, drone):
                     tvec = tvec[0][0]
 
                     if (show_visualization):
-                        cv2.drawFrameAxes(image_undistorted, new_K, np.zeros(4), rvec, tvec, 0.05)
+                        cv2.imshow("Undistorted Image with Aruco", image_undistorted_ar)
+                        cv2.aruco.drawDetectedMarkers(image_undistorted_ar, corners, ids)
+                        cv2.drawFrameAxes(image_undistorted_ar, new_K, np.zeros(4), rvec, tvec, 0.05)
+                        cv2.waitKey(1)
 
-#            cv2.imshow("Original)", frame)
-#            cv2.waitKey(1)
-            if (show_visualization):
-                cv2.imshow("Undistorted Image", image_undistorted)
-                cv2.waitKey(1)
+#            if (show_visualization):
+#                cv2.imshow("Undistorted Image", image_undistorted)
+#                cv2.waitKey(1)
 
             if (aruco_marker_found):    
                 if (pose_type == 'target'):
