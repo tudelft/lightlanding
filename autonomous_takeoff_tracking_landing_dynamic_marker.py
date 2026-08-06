@@ -34,6 +34,8 @@ from light_detection_blobbased import (
     get_latest_lighttarget_measurement,
     get_pose_from_arucomarker,
     get_pose_from_lightmarker,
+    show_visualization,
+    visualization_loop,
 )
 
 
@@ -462,6 +464,8 @@ async def main():
     drone = await connect_drone()
     asyncio.create_task(log_drone_telemetry(flight_logger, drone))
     asyncio.create_task(attitude_loop(drone))
+    if show_visualization:
+        asyncio.create_task(visualization_loop())
     await asyncio.sleep(2.0)  # Wait for attitude needed by pose_type="target".
     if not ENABLE_LIGHT_MARKER:
         start_aruco_tracker(drone)

@@ -31,6 +31,29 @@ markertype = 'Lshape'  # 'Lshape' or 'aruco'
 show_visualization = True
 drone_attitude_reliable = True
 
+_visualization_lock = threading.Lock()
+_latest_visualizations = {}
+
+def publish_visualization(name, image):
+    if show_visualization and image is not None:
+        with _visualization_lock:
+            _latest_visualizations[name] = image
+
+async def visualization_loop():
+    """Render worker-produced frames from the main thread only."""
+    shown_windows = set()
+    while True:
+        with _visualization_lock:
+            images = _latest_visualizations.copy()
+        for name, image in images.items():
+            if name not in shown_windows:
+                cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+                cv2.resizeWindow(name, 700, 700)
+                shown_windows.add(name)
+            cv2.imshow(name, image)
+        cv2.waitKey(1)
+        await asyncio.sleep(0.03)
+
 rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
@@ -225,18 +248,9 @@ def detect_lights_sendodometry(
     start_time = time.time()
 
 #    cv2.waitKey(1)
-    if (show_visualization):
-       cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
-       cv2.resizeWindow('Thresholded', 700, 700) 
-
-       cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
-       cv2.resizeWindow('Annotated', 700, 700) 
-
-       cv2.namedWindow("Annotated_colors", cv2.WINDOW_NORMAL)
-       cv2.resizeWindow('Annotated_colors', 700, 700) 
-
-       cv2.namedWindow("Undistorted Image", cv2.WINDOW_NORMAL)
-       cv2.resizeWindow('Undistorted Image', 700, 700) 
+    if show_visualization:
+        cv2.namedWindow("Undistorted Image", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Undistorted Image', 700, 700)
 
     if (markertype == 'aruco'): # the mono camera is 180 degrees titled
         camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size_ar[0], s*full_size_ar[1]) # because frame is rotated below
@@ -808,16 +822,6 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
     
     camera_matrix = scale_camera_matrix(camera_matrix, s)
 
-    if (show_visualization):
-       cv2.namedWindow("Thresholded", cv2.WINDOW_NORMAL)
-       cv2.resizeWindow('Thresholded', 700, 700) 
-
-       cv2.namedWindow("Annotated", cv2.WINDOW_NORMAL)
-       cv2.resizeWindow('Annotated', 700, 700) 
-
-       cv2.namedWindow("Annotated_colors", cv2.WINDOW_NORMAL)
-       cv2.resizeWindow('Annotated_colors', 700, 700) 
-
     #camera_matrix = rotate_intrinsics_180(camera_matrix, s*1456, s*1088) # rotation was needed for mono camera, but not for rgb camera
         
     while not stop_event.is_set():
@@ -962,10 +966,8 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 
                 led_count += 1
 
-            ## Show images
-            cv2.imshow("Thresholded", thresh)
-            cv2.imshow("Annotated_colors", annotated_colors)
-            cv2.waitKey(1)
+            publish_visualization("Thresholded", thresh)
+            publish_visualization("Annotated colors", annotated_colors)
 
 #        if cv2.waitKey(1) & 0xFF == ord("q"):
 #            cv2.destroyAllWindows()
@@ -1047,8 +1049,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                             tuple(p_img.astype(int)),
                             tuple(p_proj.astype(int)),
                             (255,0,0), 5)
-                    cv2.imshow("Annotated", annotated)              
-                    cv2.waitKey(1)
+                    publish_visualization("Annotated", annotated)
 
                 if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]):
                     if (pose_type == 'target'):
@@ -1192,10 +1193,9 @@ def get_pose_from_arucomarker(pose_type, drone, acquisition_marker_id=None, acqu
                     tvec = tvec[0][0]
 
                     if (show_visualization):
-                        cv2.imshow("Undistorted Image with Aruco", image_undistorted_ar)
                         cv2.aruco.drawDetectedMarkers(image_undistorted_ar, corners, ids)
                         cv2.drawFrameAxes(image_undistorted_ar, new_K, np.zeros(4), rvec, tvec, 0.05)
-                        cv2.waitKey(1)
+                        publish_visualization("ArUco", image_undistorted_ar)
                         flight_logging.flight_logger.save_image("aruco", image_undistorted_ar)
 
 #            if (show_visualization):
