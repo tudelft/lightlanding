@@ -43,11 +43,11 @@ from light_detection_blobbased import (
 # CONFIGURATION
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = False
-ENABLE_AUTONOMY = True  # Change manually only after restrained/bench tests.
+ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
 ENABLE_LOGGING = True  # Writes JSONL telemetry and 2 Hz annotated images to ~/logs/.
-ENABLE_LIGHT_MARKER = True  # False: acquire with the large ArUco marker before switching to ID 0.
-TAKEOFF_ALT = 4.2
-TOTAL_TIMEOUT = 120.0
+ENABLE_LIGHT_MARKER = False  # False: acquire with the large ArUco marker before switching to ID 0.
+TAKEOFF_ALT = 4.5
+TOTAL_TIMEOUT = 250.0
 CONTROL_PERIOD = 0.05
 MAX_VISION_AGE_S = 0.20
 
@@ -63,35 +63,35 @@ LIGHT_TO_ARUCO_OFFSET_NED = np.array([0.0, 0.0, 0.0], dtype=float) # optional, c
 # box.  Do not hand over until ARUCO_STABLE_TIME has elapsed with valid ArUco data.
 ARUCO_START_BOX = np.array([1.5, 1.5, 1.5], dtype=float)
 ARUCO_STABLE_TIME = 0.25 # seconds: ArUco must be valid for this long before switching to ArUco control.
-LARGE_ARUCO_MARKER_ID = 1  # Unique ID of the large daytime/acquisition marker.
-LARGE_ARUCO_MARKER_SIZE_M = 0.40  # Measure and set the printed side length exactly.
+LARGE_ARUCO_MARKER_ID = 2  # Unique ID of the large daytime/acquisition marker.
+LARGE_ARUCO_MARKER_SIZE_M = 1.0  # Measure and set the printed side length exactly.
 ARUCO_LIGHT_AGREEMENT_M = 1.0  # meters: ArUco and light must agree within this distance to switch to ArUco control. If LIGHT_TO_ARUCO_OFFSET_NED is set, make this value lower (0.2-0.5).
 
 # Horizontal tracking, applied to the desired ArUco landing origin.
-KP_XY = 0.55
-KD_XY = 0.35
-MAX_HORIZONTAL_SPEED = 0.65
+KP_XY = 0.5
+KD_XY = 0.4
+MAX_HORIZONTAL_SPEED = 0.8
 POSE_FILTER_ALPHA = 0.35
 VELOCITY_FILTER_ALPHA = 0.25
 
 # Do not descend until the marker is well centered and its relative lateral
 # motion is manageable.  Keep following it whenever descent is paused.
-ARUCO_TRACK_RANGE_M = 1.40 # meters: begin ArUco tracking when the marker is within this range.  Must be greater than LIGHT_ACQUISITION_RANGE_M.
-LIGHT_ACQUISITION_RANGE_M = 1.25 # should be less than ARUCO_TRACK_RANGE_M, but not too small to avoid losing the light target before ArUco is acquired.
+ARUCO_TRACK_RANGE_M = 5.0 # meters: begin ArUco tracking when the marker is within this range.  Must be greater than LIGHT_ACQUISITION_RANGE_M.
+LIGHT_ACQUISITION_RANGE_M = 1.4 # should be less than ARUCO_TRACK_RANGE_M, but not too small to avoid losing the light target before ArUco is acquired.
 LIGHT_DESCENT_ALIGN_RADIUS_M = 0.80
 
-ALIGN_RADIUS_M = 0.20
+ALIGN_RADIUS_M = 0.40
 ALIGN_SPEED_M_S = 0.30
 ALIGN_HOLD_TIME = 0.75
-MAX_LANDING_TILT_DEG = 10.0
+MAX_LANDING_TILT_DEG = 50.0
 ORIENTATION_HOLD_TIME = 0.75
 KP_LIGHT_Z = 0.45
 MAX_LIGHT_DESCENT_SPEED = 0.5
-TOUCHDOWN_RANGE_M = 0.3  # Must be validated against camera/landing-gear geometry.
+TOUCHDOWN_RANGE_M = 0.2  # Must be validated against camera/landing-gear geometry.
 DESCENT_RATE_M_S = 0.2 # When in FINAL_DESCENT, the range reference is decremented at this rate.  The controller will try to follow it, but will not descend while off-center.
-KP_Z = 0.70
+KP_Z = 0.80
 KD_Z = 0.20
-MAX_DESCENT_SPEED = 0.5
+MAX_DESCENT_SPEED = 0.75
 MAX_CLIMB_SPEED = 0.25
 
 # If vision is absent in final descent, never keep descending blind.
@@ -280,7 +280,7 @@ async def prepare_offboard_and_takeoff(drone):
         flight_logger.log("takeoff_or_offboard_failure", error=repr(error))
         raise RuntimeError(f"Could not arm/start Offboard: {error}") from error
 
-    for _ in range(180):
+    for _ in range(200):
         await drone.offboard.set_position_ned(
             PositionNedYaw(0.0, 0.0, -TAKEOFF_ALT, COMMAND_YAW_DEG)
         )
@@ -442,6 +442,7 @@ async def run_mission(light_stop_event, drone):
                 if not is_centered(aruco_position, aruco_velocity):
                     command[2] = 0.0
                 aruco_tilt = platform_tilt_deg(aruco_orientation, latest_drone_to_ned())
+                print('aruco_tilt', aruco_tilt)
                 if aruco_tilt is None or aruco_tilt > MAX_LANDING_TILT_DEG:
                     command[2] = 0.0
 
@@ -466,7 +467,7 @@ async def main():
     asyncio.create_task(attitude_loop(drone))
     if show_visualization:
         asyncio.create_task(visualization_loop())
-    await asyncio.sleep(2.0)  # Wait for attitude needed by pose_type="target".
+    await asyncio.sleep(4)  # Wait for attitude needed by pose_type="target".
     if not ENABLE_LIGHT_MARKER:
         start_aruco_tracker(drone)
 
