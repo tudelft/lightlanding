@@ -733,6 +733,8 @@ latest_dronelocation_witharucotarget = None
 latest_droneorientation_witharucotarget = None
 latest_dronelocation_witharucotarget_timestamp = None
 latest_dronelocation_witharucotarget_sequence = 0
+# marker_id -> (drone_position, drone_orientation, timestamp, sequence)
+latest_drone_aruco_measurements = {}
 
 vision_lock = threading.Lock()
 latest_lighttarget_timestamp = None
@@ -740,6 +742,7 @@ latest_lighttarget_sequence = 0
 latest_arucotarget_timestamp = None
 latest_arucotarget_sequence = 0
 latest_arucotarget_id = None
+latest_arucotarget_measurements = {}  # marker_id -> (position, orientation, timestamp, sequence)
 MAX_ATTITUDE_AGE_S = 0.15
 MAX_ARUCO_REPROJECTION_ERROR_PX = 3.0
 MAX_ARUCO_RANGE_M = 6.0
@@ -765,10 +768,15 @@ def _clear_light_target():
 def _publish_aruco_target(position, orientation, capture_time, marker_id=None):
     global latest_arucotarget_location, latest_arucotarget_orientation, latest_arucotarget_timestamp, latest_arucotarget_sequence, latest_arucotarget_id
     with vision_lock:
-        latest_arucotarget_location = np.asarray(position, dtype=float).copy()
+        position = np.asarray(position, dtype=float).copy()
+        latest_arucotarget_sequence += 1
+        latest_arucotarget_measurements[marker_id] = (
+            position, orientation, capture_time, latest_arucotarget_sequence
+        )
+        # Preserve the legacy latest-marker interface for existing callers.
+        latest_arucotarget_location = position
         latest_arucotarget_orientation = orientation
         latest_arucotarget_timestamp = capture_time
-        latest_arucotarget_sequence += 1
         latest_arucotarget_id = marker_id
         flight_logging.flight_logger.log("aruco_pose", position=position, marker_id=marker_id)
 
@@ -1164,102 +1172,78 @@ def get_pose_from_arucomarker(pose_type, drone, acquisition_marker_id=None, acqu
             green_ar, map1, map2, interpolation=cv2.INTER_LINEAR)
 
         ### ARUCO Detection
-        aruco_marker_found = False
         print('Looking for Aruco')
         corners, ids, _ = detector.detectMarkers(image_undistorted_ar)
         print('Found ids', ids)
+        published = False
         if ids is not None:
             ids = ids.flatten()
-            if target_id in ids:
-                selected_marker_id = target_id
-                selected_marker_size = marker_size
-            elif acquisition_marker_id is not None and acquisition_marker_id in ids:
-                selected_marker_id = acquisition_marker_id
-                selected_marker_size = acquisition_marker_size_m
-            else:
-                selected_marker_id = None
+            marker_sizes = {target_id: marker_size}
+            if acquisition_marker_id is not None:
+                marker_sizes[acquisition_marker_id] = acquisition_marker_size_m
 
             for i, marker_id in enumerate(ids):
-                if marker_id == selected_marker_id:
-                    aruco_marker_found = True
-                    rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(
-                        [corners[i]],
-                        selected_marker_size,
-                        new_K,
-                        np.zeros(4)
-                    )
+                if marker_id not in marker_sizes:
+                    continue
+                selected_marker_size = marker_sizes[marker_id]
+                rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(
+                    [corners[i]], selected_marker_size, new_K, np.zeros(4)
+                )
+                rvec = rvec[0][0]
+                tvec = tvec[0][0]
+                published = True
 
-                    rvec = rvec[0][0]
-                    tvec = tvec[0][0]
+                if show_visualization:
+                    cv2.aruco.drawDetectedMarkers(image_undistorted_ar, corners, ids)
+                    cv2.drawFrameAxes(image_undistorted_ar, new_K, np.zeros(4), rvec, tvec, 0.05)
 
-                    if (show_visualization):
-                        cv2.aruco.drawDetectedMarkers(image_undistorted_ar, corners, ids)
-                        cv2.drawFrameAxes(image_undistorted_ar, new_K, np.zeros(4), rvec, tvec, 0.05)
-                        publish_visualization("ArUco", image_undistorted_ar)
-                        flight_logging.flight_logger.save_image("aruco", image_undistorted_ar)
-
-#            if (show_visualization):
-#                cv2.imshow("Undistorted Image", image_undistorted)
-#                cv2.waitKey(1)
-
-            if (aruco_marker_found):    
-                if (pose_type == 'target'):
+                if pose_type == 'target':
                     R_wld_to_cam, _ = cv2.Rodrigues(rvec)
-                    T_wld_to_cam = np.eye(4)
-                    trans_marker_to_cam = tvec.flatten()
                     rot_cam_to_drone = np.array([
-                        [ 0, -1,  0],
-                        [ 1,  0,  0],
-                        [ 0,  0,  1],
+                        [0, -1, 0],
+                        [1, 0, 0],
+                        [0, 0, 1],
                     ])
-            
-                    trans_marker_to_drone = rot_cam_to_drone @ trans_marker_to_cam # + trans_cam_to_drone
-                    trans_marker_to_ned = rot_drone_to_ned @ trans_marker_to_drone # + trans_drone_to_ned
-
-                    x, y, z = trans_marker_to_ned
-                    text = f"ID {marker_id} MarkerLoc X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
-                    
-                    cam_pos = p = trans_marker_to_ned
-                    cam_orient_quat = q = rot_drone_to_ned @ rot_cam_to_drone @ R_wld_to_cam
-
-                    _publish_aruco_target(p, q, time.monotonic(), marker_id)
-                    
-                elif (pose_type == 'drone'):
+                    trans_marker_to_drone = rot_cam_to_drone @ tvec.flatten()
+                    p = rot_drone_to_ned @ trans_marker_to_drone
+                    q = rot_drone_to_ned @ rot_cam_to_drone @ R_wld_to_cam
+                    _publish_aruco_target(p, q, time.monotonic(), int(marker_id))
+                elif pose_type == 'drone':
                     R_wld_to_cam, _ = cv2.Rodrigues(rvec)
-                    #print('tvec', tvec)
                     T_wld_to_cam = np.eye(4)
                     T_wld_to_cam[:3, :3] = R_wld_to_cam
                     T_wld_to_cam[:3, 3] = tvec.flatten()
-
-                    # Invert transform
-                    T_cam_to_wld = np.linalg.inv(T_wld_to_cam)
                     basis_change = np.array([
-                      [0,  1, 0, 0],
-                      [1,  0, 0, 0],
-                      [0, 0, -1, 0],
-                      [0,  0, 0, 1],
+                        [0, 1, 0, 0],
+                        [1, 0, 0, 0],
+                        [0, 0, -1, 0],
+                        [0, 0, 0, 1],
                     ], dtype=float)
-
-                    #T_drone_to_wld = T_cam_to_wld 
-                    T_drone_to_wld = basis_change @ T_cam_to_wld
-                    x, y, z = T_drone_to_wld[:3,3]
-                    
-                    cam_pos = p = T_drone_to_wld[:3,3]
-                    cam_orient_quat = q =  R.from_matrix(T_drone_to_wld[:3, :3]).as_quat() 
-                    text = f"ID {marker_id} DroneLoc X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m"
-
+                    T_drone_to_wld = basis_change @ np.linalg.inv(T_wld_to_cam)
                     with vision_lock:
-                        latest_dronelocation_witharucotarget = np.asarray(p, dtype=float).copy()
-                        latest_droneorientation_witharucotarget = q
-                        latest_dronelocation_witharucotarget_timestamp = time.monotonic()
+                        capture_time = time.monotonic()
+                        drone_position = T_drone_to_wld[:3, 3].copy()
+                        drone_orientation = R.from_matrix(T_drone_to_wld[:3, :3]).as_quat()
                         latest_dronelocation_witharucotarget_sequence += 1
+                        latest_drone_aruco_measurements[int(marker_id)] = (
+                            drone_position, drone_orientation, capture_time,
+                            latest_dronelocation_witharucotarget_sequence,
+                        )
+                        # Preserve the legacy no-ID drone-pose interface.
+                        latest_dronelocation_witharucotarget = drone_position
+                        latest_droneorientation_witharucotarget = drone_orientation
+                        latest_dronelocation_witharucotarget_timestamp = capture_time
 
-            else:
-                latest_arucotarget_location = None
-                latest_arucotarget_orientation = None
-                latest_dronelocation_witharucotarget = None
-                latest_droneorientation_witharucotarget = None
-                latest_dronelocation_witharucotarget_timestamp = None
+            if show_visualization and published:
+                publish_visualization("ArUco", image_undistorted_ar)
+                flight_logging.flight_logger.save_image("aruco", image_undistorted_ar)
+
+        if not published:
+            latest_arucotarget_location = None
+            latest_arucotarget_orientation = None
+            latest_dronelocation_witharucotarget = None
+            latest_droneorientation_witharucotarget = None
+            latest_dronelocation_witharucotarget_timestamp = None
 
 def get_latest_lighttarget_location():
     with vision_lock:
@@ -1286,10 +1270,17 @@ def get_latest_drone_measurement_from_lightmarker():
         p = None if latest_dronelocation_withlighttarget is None else latest_dronelocation_withlighttarget.copy()
         return p, latest_droneorientation_withlighttarget, latest_dronelocation_withlighttarget_timestamp, latest_dronelocation_withlighttarget_sequence
 
-def get_latest_drone_measurement_from_arucomarker():
+def get_latest_drone_measurement_from_arucomarker(marker_id=None):
     with vision_lock:
+        if marker_id is not None:
+            measurement = latest_drone_aruco_measurements.get(marker_id)
+            if measurement is None:
+                return None, None, None, 0
+            p, orientation, timestamp, sequence = measurement
+            return p.copy(), np.asarray(orientation, dtype=float).copy(), timestamp, sequence
         p = None if latest_dronelocation_witharucotarget is None else latest_dronelocation_witharucotarget.copy()
-        return p, latest_droneorientation_witharucotarget, latest_dronelocation_witharucotarget_timestamp, latest_dronelocation_witharucotarget_sequence
+        orientation = None if latest_droneorientation_witharucotarget is None else np.asarray(latest_droneorientation_witharucotarget, dtype=float).copy()
+        return p, orientation, latest_dronelocation_witharucotarget_timestamp, latest_dronelocation_witharucotarget_sequence
 
 def get_latest_lighttarget_measurement():
     with vision_lock:
@@ -1297,8 +1288,14 @@ def get_latest_lighttarget_measurement():
         orientation = None if latest_lighttarget_orientation is None else np.asarray(latest_lighttarget_orientation, dtype=float).copy()
         return p, orientation, latest_lighttarget_timestamp, latest_lighttarget_sequence
 
-def get_latest_arucotarget_measurement():
+def get_latest_arucotarget_measurement(marker_id=None):
     with vision_lock:
+        if marker_id is not None:
+            measurement = latest_arucotarget_measurements.get(marker_id)
+            if measurement is None:
+                return None, None, None, 0, marker_id
+            p, orientation, timestamp, sequence = measurement
+            return p.copy(), np.asarray(orientation, dtype=float).copy(), timestamp, sequence, marker_id
         p = None if latest_arucotarget_location is None else latest_arucotarget_location.copy()
         orientation = None if latest_arucotarget_orientation is None else np.asarray(latest_arucotarget_orientation, dtype=float).copy()
-        return p, orientation, latest_arucotarget_timestamp, latest_arucotarget_sequence
+        return p, orientation, latest_arucotarget_timestamp, latest_arucotarget_sequence, latest_arucotarget_id

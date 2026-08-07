@@ -65,6 +65,7 @@ ARUCO_START_BOX = np.array([1.5, 1.5, 1.5], dtype=float)
 ARUCO_STABLE_TIME = 0.25 # seconds: ArUco must be valid for this long before switching to ArUco control.
 LARGE_ARUCO_MARKER_ID = 2  # Unique ID of the large daytime/acquisition marker.
 LARGE_ARUCO_MARKER_SIZE_M = 1.0  # Measure and set the printed side length exactly.
+SMALL_ARUCO_MARKER_ID = 0  # Precision landing marker.
 ARUCO_LIGHT_AGREEMENT_M = 1.0  # meters: ArUco and light must agree within this distance to switch to ArUco control. If LIGHT_TO_ARUCO_OFFSET_NED is set, make this value lower (0.2-0.5).
 
 # Horizontal tracking, applied to the desired ArUco landing origin.
@@ -76,7 +77,7 @@ VELOCITY_FILTER_ALPHA = 0.25
 
 # Do not descend until the marker is well centered and its relative lateral
 # motion is manageable.  Keep following it whenever descent is paused.
-ARUCO_TRACK_RANGE_M = 5.0 # meters: begin ArUco tracking when the marker is within this range.  Must be greater than LIGHT_ACQUISITION_RANGE_M.
+ARUCO_TRACK_RANGE_M = 2.2 # meters: begin ArUco tracking when the marker is within this range.  Must be greater than LIGHT_ACQUISITION_RANGE_M.
 LIGHT_ACQUISITION_RANGE_M = 1.4 # should be less than ARUCO_TRACK_RANGE_M, but not too small to avoid losing the light target before ArUco is acquired.
 LIGHT_DESCENT_ALIGN_RADIUS_M = 0.80
 
@@ -165,20 +166,20 @@ def latest_light_offset():
     return np.asarray(p, dtype=float), orientation, timestamp, sequence
 
 
-def latest_aruco_offset():
+def latest_aruco_offset(marker_id=None):
     if POSE_TYPE == "drone":
-        p, orientation, timestamp, sequence = get_latest_drone_measurement_from_arucomarker()
+        p, orientation, timestamp, sequence = get_latest_drone_measurement_from_arucomarker(marker_id)
         if p is None or timestamp is None or time.monotonic() - timestamp > MAX_VISION_AGE_S:
             return None
         # The drone-pose interface returns the vehicle pose in the marker frame.
         # Convert it back into the relative marker offset that the controller
         # expects.
-        return -np.asarray(p, dtype=float), orientation, timestamp, sequence, get_latest_arucotarget_id()
+        return -np.asarray(p, dtype=float), orientation, timestamp, sequence, marker_id
 
-    p, orientation, timestamp, sequence = get_latest_arucotarget_measurement()
+    p, orientation, timestamp, sequence, detected_marker_id = get_latest_arucotarget_measurement(marker_id)
     if p is None or timestamp is None or time.monotonic() - timestamp > MAX_VISION_AGE_S:
         return None
-    return np.asarray(p, dtype=float), orientation, timestamp, sequence, get_latest_arucotarget_id()
+    return np.asarray(p, dtype=float), orientation, timestamp, sequence, detected_marker_id
 
 
 def platform_tilt_deg(marker_orientation, drone_to_ned):
@@ -311,13 +312,16 @@ async def run_mission(light_stop_event, drone):
     state = "HOVER"
     mission_start = time.monotonic()
     last_aruco_time = None
+    last_acquisition_time = None
     aruco_started = not ENABLE_LIGHT_MARKER
     aruco_valid_since = None
     aligned_since = None
     range_reference = None
 
-    light_filter = RelativePoseFilter()
-    aruco_filter = RelativePoseFilter()
+    # These filters are deliberately independent: light/large ArUco is the
+    # acquisition source, while ID 0 is the precision landing source.
+    acquisition_filter = RelativePoseFilter()
+    small_aruco_filter = RelativePoseFilter()
 
     while True:
         print('state', state)
@@ -328,25 +332,52 @@ async def run_mission(light_stop_event, drone):
             return
 
         light_raw = latest_light_offset() if ENABLE_LIGHT_MARKER else None
-        aruco_raw = latest_aruco_offset() if aruco_started else None
+        large_aruco_raw = (
+            latest_aruco_offset(LARGE_ARUCO_MARKER_ID)
+            if aruco_started and not ENABLE_LIGHT_MARKER else None
+        )
+        small_aruco_raw = (
+            latest_aruco_offset(SMALL_ARUCO_MARKER_ID)
+            if aruco_started else None
+        )
 
-        # The light measurement is shifted onto the ArUco landing origin before
-        # it is used for control.  p_aruco = p_light + (aruco - light).
+        # The configured acquisition source is either the light marker or the
+        # large ArUco. ID 0 is always handled by its own precision filter.
         light_position = light_velocity = None
         if light_raw is not None:
             light_measurement, light_orientation, light_timestamp, _ = light_raw
-            light_position, light_velocity = light_filter.update(
+            light_position, light_velocity = acquisition_filter.update(
                 light_measurement + LIGHT_TO_ARUCO_OFFSET_NED, light_timestamp
             )
+            last_acquisition_time = light_timestamp
 
         aruco_position = aruco_velocity = None
-        if aruco_raw is not None:
-            aruco_measurement, aruco_orientation, aruco_timestamp, _, aruco_marker_id = aruco_raw
-            aruco_position, aruco_velocity = aruco_filter.update(aruco_measurement, aruco_timestamp)
+        aruco_orientation = None
+        if large_aruco_raw is not None:
+            large_measurement, _, large_timestamp, _, _ = large_aruco_raw
+            light_position, light_velocity = acquisition_filter.update(
+                large_measurement, large_timestamp
+            )
+            last_acquisition_time = large_timestamp
+
+        if small_aruco_raw is not None:
+            small_measurement, aruco_orientation, aruco_timestamp, _, _ = small_aruco_raw
+            aruco_position, aruco_velocity = small_aruco_filter.update(
+                small_measurement, aruco_timestamp
+            )
             last_aruco_time = aruco_timestamp
 
-        if not ENABLE_LIGHT_MARKER and aruco_position is not None:
-            light_position, light_velocity = aruco_position, aruco_velocity
+        # In large-ArUco acquisition mode the detector may publish ID 0 on one
+        # frame and ID 2 on the next. Keep the last fresh acquisition estimate
+        # available during the stable-ID-0 handoff, without mixing filters.
+        if (
+            light_position is None
+            and acquisition_filter.position is not None
+            and last_acquisition_time is not None
+            and now - last_acquisition_time <= MAX_VISION_AGE_S
+        ):
+            light_position = acquisition_filter.position.copy()
+            light_velocity = acquisition_filter.velocity.copy()
 
         flight_logger.log("control_sample", state=state, light_position=light_position, light_velocity=light_velocity, aruco_position=aruco_position, aruco_velocity=aruco_velocity)
 
@@ -370,26 +401,30 @@ async def run_mission(light_stop_event, drone):
                     start_aruco_tracker(drone)
                     aruco_started = True
 
-                if not ENABLE_LIGHT_MARKER and aruco_position is not None and aruco_marker_id == 0:
-                    state = "ARUCO_TRACK"
-                    aligned_since = None
-                    print("Small ArUco acquired: switching control source.")
-                elif aruco_position is not None:
+                # Both acquisition modes use the same handoff: the small
+                # precision marker must be continuously visible and stable.
+                if (
+                    aruco_position is not None
+                    and aruco_position[2] <= ARUCO_TRACK_RANGE_M
+                ):
                     agreement = float(np.linalg.norm(aruco_position - light_position))
                     if agreement <= ARUCO_LIGHT_AGREEMENT_M:
                         aruco_valid_since = aruco_valid_since or now
                         if now - aruco_valid_since >= ARUCO_STABLE_TIME:
                             state = "ARUCO_TRACK"
                             aligned_since = None
-                            print("Stable ArUco lock: switching control source.")
+                            print("Stable small ArUco lock: switching control source.")
                     else:
                         aruco_valid_since = None
+                else:
+                    aruco_valid_since = None
 
         elif state == "ARUCO_TRACK":
             if aruco_position is None:
-                # Light stays alive until final descent and is a safe fallback.
+                # Return to the configured acquisition source (light or large
+                # ArUco); the large marker must not drive precision tracking.
                 if light_position is not None:
-                    print("ArUco lost: falling back to light tracking.")
+                    print("Small ArUco lost: returning to acquisition tracking.")
                     state = "LIGHT_TRACK"
                     aruco_valid_since = None
                 else:
@@ -413,10 +448,15 @@ async def run_mission(light_stop_event, drone):
 
         elif state == "FINAL_DESCENT":
             if aruco_position is None:
-                # Cancel the last descent command immediately. Light detections
-                # must not keep a final ArUco-guided descent alive.
+                # Cancel descent immediately when the small precision marker is
+                # lost. Resume the selected acquisition mode when it is visible.
                 await send_velocity(drone, np.zeros(3))
-                if (
+                if light_position is not None:
+                    print("Small ArUco lost: returning to acquisition tracking.")
+                    state = "LIGHT_TRACK"
+                    aruco_valid_since = None
+                    aligned_since = None
+                elif (
                     last_aruco_time is None
                     or now - last_aruco_time > LOST_MARKER_TIMEOUT
                 ):
