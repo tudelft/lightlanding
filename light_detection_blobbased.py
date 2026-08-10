@@ -28,7 +28,7 @@ CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odom
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization = True
+show_visualization = False
 drone_attitude_reliable = True
 
 _visualization_lock = threading.Lock()
@@ -93,12 +93,21 @@ camera_matrix_mono = np.array(
  [  0.,           0.,           1.        ]])
 dist_coeffs_mono = np.array([-0.13573729,  0.03353202, -0.0345132,   0.01030255])
 
-# computed at full_resolution of rgb camera (1945 x 1097)
-camera_matrix_rgb = np.array( [[1.13783006e+03, 0.00000000e+00, 9.99899908e+02],
- [0.00000000e+00, 1.14071831e+03, 5.99492820e+02],
+# computed at full_resolution of rgb camera (1945 x 1097). Innomaker imx327LQR raspberry pi industrial camera module
+camera_matrix_rgb = np.array(
+ [[1.28039260e+03, 0.00000000e+00, 1.25478995e+03],
+ [0.00000000e+00, 1.27992166e+03, 9.10815180e+02],
  [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
-dist_coeffs_rgb = np.array(
- [-0.08491671, -0.09462636,  0.1612735,  -0.09637632])
+ 
+dist_coeffs_rgb = np.array([-1.99362880e-02, -1.10620253e-03,  1.52169132e-04, -4.47659636e-05])
+
+
+# computed at full_resolution of rgb camera (1945 x 1097). Innomaker imx327LQR raspberry pi industrial camera module
+#camera_matrix_rgb = np.array( [[1.13783006e+03, 0.00000000e+00, 9.99899908e+02],
+# [0.00000000e+00, 1.14071831e+03, 5.99492820e+02],
+# [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
+#dist_coeffs_rgb = np.array(
+# [-0.08491671, -0.09462636,  0.1612735,  -0.09637632])
 
 # camera_matrix_rgb_perspective = np.array(
 #  [[2.36184664e+03, 0.00000000e+00, 7.68344401e+02],
@@ -1127,7 +1136,7 @@ def get_pose_from_arucomarker(pose_type, drone, acquisition_marker_id=None, acqu
     cap = None
 
     camera_matrix = scale_camera_matrix(camera_matrix, s) # resizing the image below
-    camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size_ar[0], s*full_size_ar[1]) # because frame is rotated below
+#    camera_matrix = rotate_intrinsics_180(camera_matrix, s*full_size_ar[0], s*full_size_ar[1]) # because frame is rotated below
         
     while True:
 #        time.sleep(1)
@@ -1145,7 +1154,7 @@ def get_pose_from_arucomarker(pose_type, drone, acquisition_marker_id=None, acqu
         frame_ar = picam2_ar.capture_array()
         height, width  = frame_ar.shape[:2]
         frame_ar = cv2.resize(frame_ar, (int(s*width), int(s*height)))
-        frame_ar = cv2.rotate(frame_ar, cv2.ROTATE_180)
+#        frame_ar = cv2.rotate(frame_ar, cv2.ROTATE_180)
         green_ar = frame_ar[:, :, 1]
 
         h, w = frame_ar.shape[:2]        

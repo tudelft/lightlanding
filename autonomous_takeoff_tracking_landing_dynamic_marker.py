@@ -44,9 +44,9 @@ from light_detection_blobbased import (
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = False
 ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
-ENABLE_LOGGING = True  # Writes JSONL telemetry and 2 Hz annotated images to ~/logs/.
-ENABLE_LIGHT_MARKER = False  # False: acquire with the large ArUco marker before switching to ID 0.
-TAKEOFF_ALT = 4.5
+ENABLE_LOGGING = False  # Writes JSONL telemetry and 2 Hz annotated images to ~/logs/.
+ENABLE_LIGHT_MARKER = True  # False: acquire with the large ArUco marker before switching to ID 0.
+TAKEOFF_ALT = 5.0
 TOTAL_TIMEOUT = 250.0
 CONTROL_PERIOD = 0.05
 MAX_VISION_AGE_S = 0.20
@@ -77,14 +77,14 @@ VELOCITY_FILTER_ALPHA = 0.25
 
 # Do not descend until the marker is well centered and its relative lateral
 # motion is manageable.  Keep following it whenever descent is paused.
-ARUCO_TRACK_RANGE_M = 2.2 # meters: begin ArUco tracking when the marker is within this range.  Must be greater than LIGHT_ACQUISITION_RANGE_M.
-LIGHT_ACQUISITION_RANGE_M = 1.4 # should be less than ARUCO_TRACK_RANGE_M, but not too small to avoid losing the light target before ArUco is acquired.
+ARUCO_TRACK_RANGE_M = 2.8 # meters: begin ArUco tracking when the marker is within this range.  Must be greater than LIGHT_ACQUISITION_RANGE_M.
+LIGHT_ACQUISITION_RANGE_M = 2.0 # should be less than ARUCO_TRACK_RANGE_M, but not too small to avoid losing the light target before ArUco is acquired.
 LIGHT_DESCENT_ALIGN_RADIUS_M = 0.80
 
 ALIGN_RADIUS_M = 0.40
 ALIGN_SPEED_M_S = 0.30
 ALIGN_HOLD_TIME = 0.75
-MAX_LANDING_TILT_DEG = 50.0
+MAX_LANDING_TILT_DEG = 10.0
 ORIENTATION_HOLD_TIME = 0.75
 KP_LIGHT_Z = 0.45
 MAX_LIGHT_DESCENT_SPEED = 0.5
@@ -510,17 +510,17 @@ async def main():
     await asyncio.sleep(4)  # Wait for attitude needed by pose_type="target".
     if not ENABLE_LIGHT_MARKER:
         start_aruco_tracker(drone)
-
-    threading.Thread(
-        target=get_pose_from_lightmarker,
-        kwargs={
+    else:
+        threading.Thread(
+           target=get_pose_from_lightmarker,
+           kwargs={
             "stop_event": light_stop_event,
             "pose_type": POSE_TYPE,
             "drone": drone,
             "brightness_threshold": BRIGHTNESS_THRESHOLD,
-        },
-        daemon=True,
-    ).start()
+            },
+          daemon=True,
+        ).start()
 
     try:
         await run_mission(light_stop_event, drone)
