@@ -28,8 +28,8 @@ CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odom
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization = False
-drone_attitude_reliable = True
+show_visualization = True
+drone_attitude_reliable = False
 
 _visualization_lock = threading.Lock()
 _latest_visualizations = {}
@@ -64,12 +64,12 @@ min_group_size=4
 cross_ratio_tol=0.025
 
 # Camera setup
-blur_window = (5, 5) # (9, 9) for monochrome global shutter
+blur_window = (3, 3) # (9, 9) for monochrome global shutter
 exposure_time_rgb = 5000 # microseconds
 exposure_time_mono = 20000 # microseconds
 
 # Pose estimation acceptance criteria
-brightness_threshold = 35 # 60 for monochrome global shutter
+brightness_threshold = 30 # 60 for monochrome global shutter
 reproj_threshold = 5 # default 5
 
 # ArUco setup
@@ -120,8 +120,8 @@ dist_coeffs_rgb = np.array([-1.99362880e-02, -1.10620253e-03,  1.52169132e-04, -
 #   0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  0.00000000e+00,
 #   0.00000000e+00,  0.00000000e+00])
 
-s=0.9 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
-
+s_rgb=1.0 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
+s_aruco = 0.6
 latest_attitude = None
 latest_attitude_time = None
 mavlink_lock = threading.Lock()
@@ -812,15 +812,14 @@ config = picam2.create_video_configuration(
             
 picam2.configure(config)
 controls = {
-    "ScalerCrop": (0, 0, *full_size),
-    "ExposureTime": exposure_time_rgb,   # microseconds
+    "ScalerCrop": (0, 0, *full_size),    "ExposureTime": exposure_time_rgb,   # microseconds
     "AnalogueGain": 1.0}
 picam2.set_controls(controls)
 picam2.start()
 
 def get_pose_from_lightmarker(stop_event, pose_type, drone,
     brightness_threshold,
-    min_area: int = 80,
+    min_area: int = 30,
     max_area: int = 12000):
     # This function is similar to detect_lights_sendodometry but only returns the estimated pose without any MAVLink communication or visualization. It can be used for unit testing the pose estimation logic in isolation.
 
@@ -831,6 +830,8 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
     global latest_droneorientation_withlighttarget
     global latest_dronelocation_withlighttarget_timestamp
     global latest_dronelocation_withlighttarget_sequence
+    global s_rgb
+    s = s_rgb
 
     camera_matrix = camera_matrix_rgb.copy()
     dist_coeffs = dist_coeffs_rgb.copy()
@@ -849,6 +850,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         # -------------------------
 
         # Use monotonic clock, NOT time.time()
+        start_time = time.time()
         image_capture_time_usec = int(time.monotonic() * 1e6)
         mavlink_timestamp = image_capture_time_usec
         with mavlink_lock:
@@ -949,8 +951,9 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
             radius = int(circle[2])
             h, w = annotated_colors.shape[:2]
             y, x = np.ogrid[:h, :w]
-            inside_circle = (x-center[0])**2 + (y-center[1])**2 <= radius**2
+            inside_circle = (x-center[0])**2 + (y-center[1])**2 <= 0.5 *  radius**2
             led_mean = int(green_undistorted[inside_circle].mean())
+#            led_mean = green_undistorted[center]
             filteredcircles_avgcolor.append(led_mean)
 
         filteredcircles_avgcolor_sorted = np.argsort(filteredcircles_avgcolor)
@@ -1046,7 +1049,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 
                 text = f"Drone location: X:{x:.2f} Y:{y:.2f} Z:{z:.2f} m, {pose_dict["positive_depth"]}, {pose_dict["reprojection_error"]:.2f}"
                 print("Estimated pose:", x, y, z) if (pose_dict["reprojection_error"] < reproj_threshold and pose_dict["positive_depth"]) else print("Pose estimation failed")
-
+                print("time_taken light detection loop:", time.time() - start_time)
                 if (show_visualization and pose_dict["reprojection_error"] < reproj_threshold):
                     cv2.putText(
                     annotated,
@@ -1129,6 +1132,8 @@ def get_pose_from_arucomarker(pose_type, drone, acquisition_marker_id=None, acqu
     global latest_droneorientation_witharucotarget
     global latest_dronelocation_witharucotarget_timestamp
     global latest_dronelocation_witharucotarget_sequence
+    global s_aruco
+    s = s_aruco
 
     camera_matrix = camera_matrix_mono.copy()
     dist_coeffs = dist_coeffs_mono.copy()

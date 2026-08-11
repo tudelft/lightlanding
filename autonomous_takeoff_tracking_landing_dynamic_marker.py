@@ -48,7 +48,7 @@ ENABLE_LOGGING = False  # Writes JSONL telemetry and 2 Hz annotated images to ~/
 ENABLE_LIGHT_MARKER = True  # False: acquire with the large ArUco marker before switching to ID 0.
 TAKEOFF_ALT = 5.0
 TOTAL_TIMEOUT = 250.0
-CONTROL_PERIOD = 0.05
+CONTROL_PERIOD = 0.1
 MAX_VISION_AGE_S = 0.20
 
 # All position vectors below use NED components [north, east, down].
@@ -103,8 +103,8 @@ ABORT_CLIMB_SPEED = 0.20
 # use the heading you have validated for this vehicle, rather than assuming that
 # the marker orientation is available from the current target-pose interface.
 COMMAND_YAW_DEG = 0.0
-BRIGHTNESS_THRESHOLD = 36
-POSE_TYPE = "target"
+BRIGHTNESS_THRESHOLD = 32
+POSE_TYPE = "drone"
 
 SERIAL_IP = "serial:///dev/ttyACM0:115200" if not MAVLINK_MULTIPLE_CONNECTIONS else "udpin://127.0.0.1:14600"
 flight_logger = configure_flight_logger(ENABLE_LOGGING)
