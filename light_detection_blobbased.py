@@ -841,6 +841,30 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
     camera_matrix = scale_camera_matrix(camera_matrix, s)
 
     #camera_matrix = rotate_intrinsics_180(camera_matrix, s*1456, s*1088) # rotation was needed for mono camera, but not for rgb camera
+
+    # The camera configuration and scale are fixed for this worker, so the
+    # undistortion maps only need to be built once per frame resolution.
+    map_size = None
+    new_K = None
+    map1 = None
+    map2 = None
+
+    def local_circle_mean(image, center, radius, radius_scale=1.0):
+        """Return a disk mean without allocating a mask the size of the frame."""
+        center_x, center_y = center
+        effective_radius = max(float(radius) * radius_scale, 0.5)
+        extent = int(math.ceil(effective_radius))
+
+        x0 = max(0, center_x - extent)
+        x1 = min(image.shape[1], center_x + extent + 1)
+        y0 = max(0, center_y - extent)
+        y1 = min(image.shape[0], center_y + extent + 1)
+        patch = image[y0:y1, x0:x1]
+
+        patch_y, patch_x = np.ogrid[y0:y1, x0:x1]
+        disk = ((patch_x - center_x) ** 2 + (patch_y - center_y) ** 2
+                <= effective_radius ** 2)
+        return int(patch[disk].mean())
         
     while not stop_event.is_set():
     # while True:
@@ -868,21 +892,23 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 
         green = diff_image_RG = red.astype(np.int16) - green.astype(np.int16)
 
-        new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
-        camera_matrix,
-        dist_coeffs,
-        (width,height),
-        np.eye(3),
-        balance=0.0)
-
-        map1, map2 = cv2.fisheye.initUndistortRectifyMap(
-            camera_matrix,
-            dist_coeffs,
-            np.eye(3),
-            new_K,
-            (width, height),
-            cv2.CV_16SC2,
-        )
+        if map_size != (width, height):
+            new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
+                camera_matrix,
+                dist_coeffs,
+                (width, height),
+                np.eye(3),
+                balance=0.0,
+            )
+            map1, map2 = cv2.fisheye.initUndistortRectifyMap(
+                camera_matrix,
+                dist_coeffs,
+                np.eye(3),
+                new_K,
+                (width, height),
+                cv2.CV_16SC2,
+            )
+            map_size = (width, height)
         
         image_undistorted = cv2.remap(
             frame, map1, map2, interpolation=cv2.INTER_LINEAR)
@@ -896,13 +922,11 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         annotated_colors = blurred.copy()
         blurred = cv2.cvtColor(blurred, cv2.COLOR_RGB2GRAY)
         
-        # threshold for top 10%
-        brightness_mask = np.percentile(blurred, 90)
-
-        # select pixels above threshold
-        top_pixels = blurred[blurred >= brightness_mask]
-
-        avg_top_10_intensities = np.mean(top_pixels)
+        # The fixed brightness threshold below is used instead of adaptive
+        # top-10-percent statistics, so leave this expensive calculation off.
+        # brightness_mask = np.percentile(blurred, 90)
+        # top_pixels = blurred[blurred >= brightness_mask]
+        # avg_top_10_intensities = np.mean(top_pixels)
         # brightness_threshold = avg_top_10_intensities - 10
 
         # Threshold bright regions (likely LEDs)
@@ -949,10 +973,9 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         for circle in fitered_circles:    
             center = (int(circle[0]), int(circle[1]))
             radius = int(circle[2])
-            h, w = annotated_colors.shape[:2]
-            y, x = np.ogrid[:h, :w]
-            inside_circle = (x-center[0])**2 + (y-center[1])**2 <= 0.5 *  radius**2
-            led_mean = int(green_undistorted[inside_circle].mean())
+            led_mean = local_circle_mean(
+                green_undistorted, center, radius, radius_scale=math.sqrt(0.5)
+            )
 #            led_mean = green_undistorted[center]
             filteredcircles_avgcolor.append(led_mean)
 
@@ -964,10 +987,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                 # Draw annotation
                 center = (int(circle[0]), int(circle[1]))
                 radius = int(circle[2])
-                h, w = annotated_colors.shape[:2]
-                y, x = np.ogrid[:h, :w]
-                inside_circle = (x-center[0])**2 + (y-center[1])**2 <= radius**2
-                led_mean = int(green_undistorted[inside_circle].mean())
+                led_mean = local_circle_mean(green_undistorted, center, radius)
                 led_type = np.where(filteredcircles_avgcolor_sorted==led_count)[0] <= 2  #first 4 LEDs based on min avg intensity
                 ann_circle_color = (0,255,0) if (led_type==1) else (0,0,255)
                 
