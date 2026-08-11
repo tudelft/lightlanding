@@ -103,8 +103,8 @@ ABORT_CLIMB_SPEED = 0.20
 # use the heading you have validated for this vehicle, rather than assuming that
 # the marker orientation is available from the current target-pose interface.
 COMMAND_YAW_DEG = 0.0
-BRIGHTNESS_THRESHOLD = 32
-POSE_TYPE = "drone"
+BRIGHTNESS_THRESHOLD = 30
+POSE_TYPE = "target"
 
 SERIAL_IP = "serial:///dev/ttyACM0:115200" if not MAVLINK_MULTIPLE_CONNECTIONS else "udpin://127.0.0.1:14600"
 flight_logger = configure_flight_logger(ENABLE_LOGGING)

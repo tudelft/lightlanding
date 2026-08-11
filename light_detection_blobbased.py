@@ -28,7 +28,7 @@ CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odom
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization = True
+show_visualization =  False
 drone_attitude_reliable = False
 
 _visualization_lock = threading.Lock()
@@ -58,14 +58,14 @@ rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 # L-shape marker setup
-radius_tol=0.5 
+radius_tol=1.0 
 line_tol=5.0
 min_group_size=4 
 cross_ratio_tol=0.025
 
 # Camera setup
 blur_window = (3, 3) # (9, 9) for monochrome global shutter
-exposure_time_rgb = 5000 # microseconds
+exposure_time_rgb = 3000 # microseconds
 exposure_time_mono = 20000 # microseconds
 
 # Pose estimation acceptance criteria
@@ -121,7 +121,7 @@ dist_coeffs_rgb = np.array([-1.99362880e-02, -1.10620253e-03,  1.52169132e-04, -
 #   0.00000000e+00,  0.00000000e+00])
 
 s_rgb=1.0 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
-s_aruco = 0.6
+s_aruco = 0.65
 latest_attitude = None
 latest_attitude_time = None
 mavlink_lock = threading.Lock()
@@ -974,7 +974,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
             center = (int(circle[0]), int(circle[1]))
             radius = int(circle[2])
             led_mean = local_circle_mean(
-                green_undistorted, center, radius, radius_scale=math.sqrt(0.5)
+                green_undistorted, center, radius, radius_scale=math.sqrt(0.3)
             )
 #            led_mean = green_undistorted[center]
             filteredcircles_avgcolor.append(led_mean)
