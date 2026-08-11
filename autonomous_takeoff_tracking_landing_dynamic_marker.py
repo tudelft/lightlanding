@@ -43,7 +43,7 @@ from light_detection_blobbased import (
 # CONFIGURATION
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = False
-ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
+ENABLE_AUTONOMY = True  # Change manually only after restrained/bench tests.
 ENABLE_LOGGING = False  # Writes JSONL telemetry and 2 Hz annotated images to ~/logs/.
 ENABLE_LIGHT_MARKER = True  # False: acquire with the large ArUco marker before switching to ID 0.
 TAKEOFF_ALT = 5.0
@@ -54,13 +54,19 @@ MAX_VISION_AGE_S = 0.20
 # "auto_takeoff": current behavior--the script arms, starts Offboard, and
 # commands takeoff. "rc_handover": the pilot takes off and approaches in
 # Position/Mission mode; Offboard starts only after a stable light-marker lock.
-AUTONOMY_START_MODE = "auto_takeoff"
-
+AUTONOMY_START_MODE = "auto_takeoff" # auto_takeoff or rc_handover
 # Used only when AUTONOMY_START_MODE == "rc_handover". Values are relative
 # marker-to-drone quantities, in metres and metres/second.
 OFFBOARD_TAKEOVER_RANGE_M = 3.0
 OFFBOARD_TAKEOVER_MAX_SPEED_M_S = 0.30
 OFFBOARD_TAKEOVER_STABLE_TIME = 0.75
+
+# VelocityNedYaw's yaw argument is an absolute NED yaw.  Keep this explicit:
+# use the heading you have validated for this vehicle, rather than assuming that
+# the marker orientation is available from the current target-pose interface.
+COMMAND_YAW_DEG = 0.0
+BRIGHTNESS_THRESHOLD = 30
+POSE_TYPE = "target"
 
 # All position vectors below use NED components [north, east, down].
 # This is p_aruco - p_light: vector from the light-marker origin to the ArUco
@@ -115,13 +121,6 @@ ABORT_CLIMB_SPEED = 0.20
 # interval while descending, then let PX4 complete the landing.
 PREDICTED_LANDING_TIME_S = 1.0
 PREDICTED_LANDING_DESCENT_SPEED_M_S = 0.30
-
-# VelocityNedYaw's yaw argument is an absolute NED yaw.  Keep this explicit:
-# use the heading you have validated for this vehicle, rather than assuming that
-# the marker orientation is available from the current target-pose interface.
-COMMAND_YAW_DEG = 0.0
-BRIGHTNESS_THRESHOLD = 30
-POSE_TYPE = "target"
 
 SERIAL_IP = "serial:///dev/ttyACM0:115200" if not MAVLINK_MULTIPLE_CONNECTIONS else "udpin://127.0.0.1:14600"
 flight_logger = configure_flight_logger(ENABLE_LOGGING)
