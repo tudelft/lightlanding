@@ -51,6 +51,17 @@ TOTAL_TIMEOUT = 250.0
 CONTROL_PERIOD = 0.1
 MAX_VISION_AGE_S = 0.20
 
+# "auto_takeoff": current behavior--the script arms, starts Offboard, and
+# commands takeoff. "rc_handover": the pilot takes off and approaches in
+# Position/Mission mode; Offboard starts only after a stable light-marker lock.
+AUTONOMY_START_MODE = "auto_takeoff"
+
+# Used only when AUTONOMY_START_MODE == "rc_handover". Values are relative
+# marker-to-drone quantities, in metres and metres/second.
+OFFBOARD_TAKEOVER_RANGE_M = 3.0
+OFFBOARD_TAKEOVER_MAX_SPEED_M_S = 0.30
+OFFBOARD_TAKEOVER_STABLE_TIME = 0.75
+
 # All position vectors below use NED components [north, east, down].
 # This is p_aruco - p_light: vector from the light-marker origin to the ArUco
 # landing origin.  Measure this for your assembly.  With no calibration, leave
@@ -88,7 +99,7 @@ MAX_LANDING_TILT_DEG = 10.0
 ORIENTATION_HOLD_TIME = 0.75
 KP_LIGHT_Z = 0.45
 MAX_LIGHT_DESCENT_SPEED = 0.5
-TOUCHDOWN_RANGE_M = 0.2  # Must be validated against camera/landing-gear geometry.
+TOUCHDOWN_RANGE_M = 0.3  # Must be validated against camera/landing-gear geometry.
 DESCENT_RATE_M_S = 0.2 # When in FINAL_DESCENT, the range reference is decremented at this rate.  The controller will try to follow it, but will not descend while off-center.
 KP_Z = 0.80
 KD_Z = 0.20
@@ -98,6 +109,12 @@ MAX_CLIMB_SPEED = 0.25
 # If vision is absent in final descent, never keep descending blind.
 LOST_MARKER_TIMEOUT = 0.35
 ABORT_CLIMB_SPEED = 0.20
+
+# Once the marker reaches TOUCHDOWN_RANGE_M it can leave the camera field of
+# view. Continue the last lateral tracking command for this short, fixed
+# interval while descending, then let PX4 complete the landing.
+PREDICTED_LANDING_TIME_S = 1.0
+PREDICTED_LANDING_DESCENT_SPEED_M_S = 0.30
 
 # VelocityNedYaw's yaw argument is an absolute NED yaw.  Keep this explicit:
 # use the heading you have validated for this vehicle, rather than assuming that
@@ -288,6 +305,26 @@ async def prepare_offboard_and_takeoff(drone):
         await asyncio.sleep(0.1)
 
 
+async def start_offboard_control(drone):
+    """Request Offboard without arming or commanding takeoff."""
+    if not ENABLE_AUTONOMY:
+        return
+
+    # PX4 requires a >2 Hz setpoint stream before accepting Offboard. Until
+    # offboard.start() succeeds these setpoints do not override the RC mode.
+    for _ in range(10):
+        await drone.offboard.set_velocity_ned(
+            VelocityNedYaw(0.0, 0.0, 0.0, COMMAND_YAW_DEG)
+        )
+        await asyncio.sleep(0.1)
+
+    try:
+        await drone.offboard.start()
+    except OffboardError as error:
+        flight_logger.log("offboard_start_failure", error=repr(error))
+        raise RuntimeError(f"Could not start Offboard: {error}") from error
+
+
 async def finish_landing(drone):
     if not ENABLE_AUTONOMY:
         return
@@ -306,7 +343,16 @@ async def finish_landing(drone):
 
 
 async def run_mission(light_stop_event, drone):
-    await prepare_offboard_and_takeoff(drone)
+    if AUTONOMY_START_MODE == "auto_takeoff":
+        await prepare_offboard_and_takeoff(drone)
+        offboard_active = ENABLE_AUTONOMY
+    elif AUTONOMY_START_MODE == "rc_handover":
+        offboard_active = False
+    else:
+        raise ValueError(
+            "AUTONOMY_START_MODE must be 'auto_takeoff' or 'rc_handover'"
+        )
+
     await send_velocity(drone, np.zeros(3))
 
     state = "HOVER"
@@ -317,6 +363,9 @@ async def run_mission(light_stop_event, drone):
     aruco_valid_since = None
     aligned_since = None
     range_reference = None
+    light_stable_since = None
+    predicted_landing_since = None
+    predicted_landing_command = None
 
     # These filters are deliberately independent: light/large ArUco is the
     # acquisition source, while ID 0 is the precision landing source.
@@ -389,9 +438,29 @@ async def run_mission(light_stop_event, drone):
 
         if state == "LIGHT_TRACK":
             if light_position is None:
+                light_stable_since = None
                 state = "HOVER"
                 await send_velocity(drone, np.zeros(3))
             else:
+                if AUTONOMY_START_MODE == "rc_handover" and not offboard_active:
+                    # Do not take control merely because the marker appears in
+                    # one frame. It must remain near and have low relative
+                    # motion for the entire hold period.
+                    light_is_stable = (
+                        np.linalg.norm(light_position) <= OFFBOARD_TAKEOVER_RANGE_M
+                        and np.linalg.norm(light_velocity) <= OFFBOARD_TAKEOVER_MAX_SPEED_M_S
+                    )
+                    light_stable_since = (
+                        (light_stable_since or now) if light_is_stable else None
+                    )
+                    if (
+                        light_stable_since is not None
+                        and now - light_stable_since >= OFFBOARD_TAKEOVER_STABLE_TIME
+                    ):
+                        print("Stable light lock: requesting Offboard control.")
+                        await start_offboard_control(drone)
+                        offboard_active = ENABLE_AUTONOMY
+
                 # Light tracking is lateral only: it follows the platform but
                 # preserves a safe height until ArUco supplies precision range.
                 await send_velocity(drone, light_tracking_velocity(light_position, light_velocity))
@@ -446,6 +515,15 @@ async def run_mission(light_stop_event, drone):
                 else:
                     aligned_since = None
 
+        elif state == "PREDICTED_LANDING":
+            # The close-range marker may now be outside the camera field of
+            # view. Assume the platform keeps the last observed velocity and
+            # direction, but only for this strictly bounded final interval.
+            if now - predicted_landing_since >= PREDICTED_LANDING_TIME_S:
+                await finish_landing(drone)
+                return
+            await send_velocity(drone, predicted_landing_command)
+
         elif state == "FINAL_DESCENT":
             if aruco_position is None:
                 # Cancel descent immediately when the small precision marker is
@@ -494,8 +572,11 @@ async def run_mission(light_stop_event, drone):
                     and aruco_tilt is not None
                     and aruco_tilt <= MAX_LANDING_TILT_DEG
                 ):
-                    await finish_landing(drone)
-                    return
+                    predicted_landing_command = command.copy()
+                    predicted_landing_command[2] = PREDICTED_LANDING_DESCENT_SPEED_M_S
+                    predicted_landing_since = now
+                    state = "PREDICTED_LANDING"
+                    print("Close-range marker lock: continuing predicted tracking before landing.")
 
         await asyncio.sleep(CONTROL_PERIOD)
 
