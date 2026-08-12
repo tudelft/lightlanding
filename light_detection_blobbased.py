@@ -28,8 +28,8 @@ CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odom
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization =  False
-drone_attitude_reliable = False
+show_visualization =   True
+drone_attitude_reliable = True
 
 _visualization_lock = threading.Lock()
 _latest_visualizations = {}
@@ -58,14 +58,14 @@ rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 # L-shape marker setup
-radius_tol=1.0 
-line_tol=5.0
+radius_tol=1.0
+line_tol=8.0
 min_group_size=4 
-cross_ratio_tol=0.025
+cross_ratio_tol=0.035
 
 # Camera setup
 blur_window = (3, 3) # (9, 9) for monochrome global shutter
-exposure_time_rgb = 3000 # microseconds
+exposure_time_rgb = 1500 # microseconds
 exposure_time_mono = 20000 # microseconds
 
 # Pose estimation acceptance criteria
@@ -819,7 +819,7 @@ picam2.start()
 
 def get_pose_from_lightmarker(stop_event, pose_type, drone,
     brightness_threshold,
-    min_area: int = 30,
+    min_area: int = 1,
     max_area: int = 12000):
     # This function is similar to detect_lights_sendodometry but only returns the estimated pose without any MAVLink communication or visualization. It can be used for unit testing the pose estimation logic in isolation.
 
@@ -1091,8 +1091,12 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                             (255,0,0), 5)
                     publish_visualization("Annotated", annotated)
 
+                print('pose_dict["reprojection_error"]', pose_dict["reprojection_error"])
+                print('pose', p)
+
                 if (pose_dict["reprojection_error"] < 5 and pose_dict["positive_depth"]):
                     if (pose_type == 'target'):
+                        print('publsihing light target')
                         _publish_light_target(p, q, time.monotonic())
                         # latest_dronelocation_withlighttarget = None
                         # latest_droneorientation_withlighttarget = None
@@ -1105,7 +1109,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                             latest_dronelocation_withlighttarget_sequence += 1
                         # latest_lighttarget_location = None
                         # latest_lighttarget_orientation = None
-
+                    print('pose estimated by light detct:', p)
                 else:
                         latest_lighttarget_location = None
                         latest_lighttarget_orientation = None
