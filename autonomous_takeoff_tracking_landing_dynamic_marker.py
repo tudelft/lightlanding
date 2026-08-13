@@ -61,10 +61,10 @@ OFFBOARD_TAKEOVER_RANGE_M = 8.0
 OFFBOARD_TAKEOVER_MAX_SPEED_M_S = 1.0
 OFFBOARD_TAKEOVER_STABLE_TIME = 0.75
 
-# VelocityNedYaw's yaw argument is an absolute NED yaw.  Keep this explicit:
-# use the heading you have validated for this vehicle, rather than assuming that
-# the marker orientation is available from the current target-pose interface.
+# VelocityNedYaw's yaw argument is an absolute NED yaw. This is only the
+# fallback used before an RC-to-Offboard handover captures the current yaw.
 COMMAND_YAW_DEG = 0.0
+command_yaw_deg = COMMAND_YAW_DEG
 BRIGHTNESS_THRESHOLD = 30
 POSE_TYPE = "target"
 
@@ -252,10 +252,10 @@ async def send_velocity(drone, velocity):
         f"command NED velocity: N={velocity[0]:+.2f}, "
         f"E={velocity[1]:+.2f}, D={velocity[2]:+.2f} m/s"
     )
-    flight_logger.log("velocity_command_ned", velocity=velocity, yaw_deg=COMMAND_YAW_DEG)
+    flight_logger.log("velocity_command_ned", velocity=velocity, yaw_deg=command_yaw_deg)
     if ENABLE_AUTONOMY:
         await drone.offboard.set_velocity_ned(
-            VelocityNedYaw(float(velocity[0]), float(velocity[1]), float(velocity[2]), COMMAND_YAW_DEG)
+            VelocityNedYaw(float(velocity[0]), float(velocity[1]), float(velocity[2]), command_yaw_deg)
         )
 
 
@@ -306,14 +306,25 @@ async def prepare_offboard_and_takeoff(drone):
 
 async def start_offboard_control(drone):
     """Request Offboard without arming or commanding takeoff."""
+    global command_yaw_deg
+
     if not ENABLE_AUTONOMY:
         return
+
+    # VelocityNedYaw uses an *absolute* yaw setpoint. Freeze the current yaw
+    # before sending the pre-Offboard setpoints, so the handover does not
+    # command a turn toward COMMAND_YAW_DEG (north).
+    async for attitude in drone.telemetry.attitude_euler():
+        if np.isfinite(attitude.yaw_deg):
+            command_yaw_deg = float(attitude.yaw_deg)
+            print(f"Preserving current heading for Offboard: {command_yaw_deg:.1f} deg")
+            break
 
     # PX4 requires a >2 Hz setpoint stream before accepting Offboard. Until
     # offboard.start() succeeds these setpoints do not override the RC mode.
     for _ in range(20):
         await drone.offboard.set_velocity_ned(
-            VelocityNedYaw(0.0, 0.0, 0.0, COMMAND_YAW_DEG)
+            VelocityNedYaw(0.0, 0.0, 0.0, command_yaw_deg)
         )
         await asyncio.sleep(0.1)
 
