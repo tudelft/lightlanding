@@ -21,7 +21,7 @@ import numpy as np
 from mavsdk import System
 from mavsdk.action import ActionError
 from mavsdk.offboard import OffboardError, PositionNedYaw, VelocityNedYaw
-from mavsdk.telemetry import LandedState
+from mavsdk.telemetry import FlightMode, LandedState
 from scipy.spatial.transform import Rotation as R
 from flight_logging import configure_flight_logger, log_drone_telemetry
 import sys
@@ -381,6 +381,12 @@ async def finish_landing(drone):
             pass
 
 
+async def monitor_flight_mode(drone, flight_mode_status):
+    """Cache PX4's reported mode so RC override can be detected by the mission."""
+    async for mode in drone.telemetry.flight_mode():
+        flight_mode_status["offboard"] = mode == FlightMode.OFFBOARD
+
+
 async def run_mission(light_stop_event, drone):
     if AUTONOMY_START_MODE == "auto_takeoff":
         await prepare_offboard_and_takeoff(drone)
@@ -391,6 +397,11 @@ async def run_mission(light_stop_event, drone):
         raise ValueError(
             "AUTONOMY_START_MODE must be 'auto_takeoff' or 'rc_handover'"
         )
+
+    flight_mode_status = {"offboard": False}
+    offboard_mode_confirmed = False
+    if AUTONOMY_START_MODE == "rc_handover":
+        asyncio.create_task(monitor_flight_mode(drone, flight_mode_status))
 
     await send_velocity(drone, np.zeros(3))
 
@@ -417,6 +428,21 @@ async def run_mission(light_stop_event, drone):
     while True:
         print('state', state)
         now = time.monotonic()
+
+        if AUTONOMY_START_MODE == "rc_handover":
+            if flight_mode_status["offboard"]:
+                offboard_mode_confirmed = True
+            elif offboard_active and offboard_mode_confirmed:
+                # The pilot switched PX4 away from Offboard. Reset to HOVER so
+                # the normal stable visual-lock checks control any re-entry.
+                offboard_active = False
+                offboard_mode_confirmed = False
+                state = "HOVER"
+                aruco_valid_since = None
+                aligned_since = None
+                light_stable_since = None
+                print("RC override detected: waiting for a new stable visual lock before Offboard re-entry.")
+
         if now - mission_start > TOTAL_TIMEOUT:
             print("Mission timeout; aborting visual descent.")
             await send_velocity(drone, np.zeros(3))
@@ -489,6 +515,7 @@ async def run_mission(light_stop_event, drone):
                         print("Stable small ArUco lock: requesting Offboard control.")
                         await start_offboard_control(drone)
                         offboard_active = ENABLE_AUTONOMY
+                        offboard_mode_confirmed = False
                     state = "ARUCO_TRACK"
                     aligned_since = None
                     print("Stable small ArUco lock: switching control source.")
@@ -536,6 +563,7 @@ async def run_mission(light_stop_event, drone):
                         print("Stable light lock: requesting Offboard control.")
                         await start_offboard_control(drone)
                         offboard_active = ENABLE_AUTONOMY
+                        offboard_mode_confirmed = False
 
                 # Light tracking is lateral only: it follows the platform but
                 # preserves a safe height until ArUco supplies precision range.
