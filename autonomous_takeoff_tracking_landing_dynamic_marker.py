@@ -24,6 +24,26 @@ from mavsdk.offboard import OffboardError, PositionNedYaw, VelocityNedYaw
 from mavsdk.telemetry import LandedState
 from scipy.spatial.transform import Rotation as R
 from flight_logging import configure_flight_logger, log_drone_telemetry
+import sys
+
+terminal = sys.stdout
+log_file = open("output.log", "w")
+
+class Logger:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, message):
+        for stream in self.streams:
+            stream.write(message)
+            stream.flush()
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+logger = Logger(terminal, log_file)
+sys.stdout = logger
 
 from light_detection_blobbased import (
     attitude_loop,
@@ -38,7 +58,6 @@ from light_detection_blobbased import (
     visualization_loop,
 )
 
-
 # =========================
 # CONFIGURATION
 # =========================
@@ -47,8 +66,8 @@ ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
 ENABLE_LOGGING = False  # Writes JSONL telemetry and 2 Hz annotated images to ~/logs/.
 ENABLE_LIGHT_MARKER = True  # False: acquire with the large ArUco marker before switching to ID 0.
 TAKEOFF_ALT = 4.5
-TOTAL_TIMEOUT = 250.0
-CONTROL_PERIOD = 0.1
+TOTAL_TIMEOUT = 700.0
+CONTROL_PERIOD = 0.05
 MAX_VISION_AGE_S = 0.30
 
 # "auto_takeoff": current behavior--the script arms, starts Offboard, and
@@ -59,7 +78,7 @@ AUTONOMY_START_MODE = "rc_handover" # auto_takeoff or rc_handover
 # marker-to-drone quantities, in metres and metres/second.
 OFFBOARD_TAKEOVER_RANGE_M = 8.0
 OFFBOARD_TAKEOVER_MAX_SPEED_M_S = 1.0
-OFFBOARD_TAKEOVER_STABLE_TIME = 0.75
+OFFBOARD_TAKEOVER_STABLE_TIME = 0.25
 
 # VelocityNedYaw's yaw argument is an absolute NED yaw. This is only the
 # fallback used before an RC-to-Offboard handover captures the current yaw.
@@ -78,7 +97,7 @@ LIGHT_TO_ARUCO_OFFSET_NED = np.array([0.0, 0.0, 0.0], dtype=float) # optional, c
 
 # Begin looking for ArUco while light tracking once the landing marker is in this
 # box.  Do not hand over until ARUCO_STABLE_TIME has elapsed with valid ArUco data.
-ARUCO_START_BOX = np.array([1.5, 1.5, 1.5], dtype=float)
+ARUCO_START_BOX = np.array([3.5, 3.5, 3.5], dtype=float)
 ARUCO_STABLE_TIME = 0.25 # seconds: ArUco must be valid for this long before switching to ArUco control.
 LARGE_ARUCO_MARKER_ID = 2  # Unique ID of the large daytime/acquisition marker.
 LARGE_ARUCO_MARKER_SIZE_M = 1.0  # Measure and set the printed side length exactly.
@@ -89,38 +108,48 @@ ARUCO_LIGHT_AGREEMENT_M = 1.5  # meters: ArUco and light must agree within this 
 KP_XY = 0.5
 KD_XY = 0.4
 MAX_HORIZONTAL_SPEED = 0.8
-POSE_FILTER_ALPHA = 0.35
-VELOCITY_FILTER_ALPHA = 0.25
+POSE_FILTER_ALPHA = 0.75
+VELOCITY_FILTER_ALPHA = 0.75
 
 # Do not descend until the marker is well centered and its relative lateral
 # motion is manageable.  Keep following it whenever descent is paused.
-ARUCO_TRACK_RANGE_M = 2.8 # meters: begin ArUco tracking when the marker is within this range.  Must be greater than LIGHT_ACQUISITION_RANGE_M.
-LIGHT_ACQUISITION_RANGE_M = 2.0 # should be less than ARUCO_TRACK_RANGE_M, but not too small to avoid losing the light target before ArUco is acquired.
+ARUCO_HANDOFF_ENTRY_RANGE_M = 2.5 # ARUCO_TRACK follows the aruco but does not descend, thus the FINAL_DESCENT_ENTRY_RANGE_M is also kept equal or higher to this
+ARUCO_HANDOFF_HOLD_RANGE_M = 2.8
+FINAL_DESCENT_ENTRY_RANGE_M = 2.7
+FINAL_DESCENT_HOLD_RANGE_M = 2.85
+LIGHT_ACQUISITION_RANGE_M = 2.0 # Should be less than ARUCO_HANDOFF_ENTRY_RANGE_M, but not too small to avoid losing the light target before ArUco is acquired.
 LIGHT_DESCENT_ALIGN_RADIUS_M = 0.80
 
 ALIGN_RADIUS_M = 0.80
-ALIGN_SPEED_M_S = 0.30
+ALIGN_SPEED_M_S = 0.50
 ALIGN_HOLD_TIME = 0.75
-MAX_LANDING_TILT_DEG = 15.0
+MAX_LANDING_TILT_DEG = 365.0
 ORIENTATION_HOLD_TIME = 0.75
 KP_LIGHT_Z = 0.45
 MAX_LIGHT_DESCENT_SPEED = 0.5
 TOUCHDOWN_RANGE_M = 0.5  # Must be validated against camera/landing-gear geometry.
+PREDICTED_LANDING_ENTRY_RANGE_M = 0.45
+PREDICTED_LANDING_HOLD_RANGE_M = 0.55
+PREDICTED_LANDING_STABLE_TIME = 0.20
 DESCENT_RATE_M_S = 0.2 # When in FINAL_DESCENT, the range reference is decremented at this rate.  The controller will try to follow it, but will not descend while off-center.
 KP_Z = 0.80
 KD_Z = 0.20
 MAX_DESCENT_SPEED = 0.75
 MAX_CLIMB_SPEED = 0.25
 
-# If vision is absent in final descent, never keep descending blind.
+# If vision is absent in final descent, climb back to this marker-relative range
+# before trying to acquire and track the target again. The controller has no
+# global altitude estimate, so the climb duration is calculated from the last
+# valid small-ArUco range.
 LOST_MARKER_TIMEOUT = 0.35
-ABORT_CLIMB_SPEED = 0.20
+VISION_LOSS_RECOVERY_RANGE_M = 3.0 # when vision is lost climb to this range (measured from marker surface) before reacquiring the target
+VISION_LOSS_CLIMB_SPEED = 0.20
 
 # Once the marker reaches TOUCHDOWN_RANGE_M it can leave the camera field of
 # view. Continue the last lateral tracking command for this short, fixed
 # interval while descending, then let PX4 complete the landing.
 PREDICTED_LANDING_TIME_S = 1.5
-PREDICTED_LANDING_DESCENT_SPEED_M_S = 0.50
+PREDICTED_LANDING_DESCENT_SPEED_M_S = 0.5
 
 SERIAL_IP = "serial:///dev/ttyACM0:115200" if not MAVLINK_MULTIPLE_CONNECTIONS else "udpin://127.0.0.1:14600"
 flight_logger = configure_flight_logger(ENABLE_LOGGING)
@@ -373,9 +402,12 @@ async def run_mission(light_stop_event, drone):
     aruco_valid_since = None
     aligned_since = None
     range_reference = None
+    last_aruco_range = None
     light_stable_since = None
     predicted_landing_since = None
     predicted_landing_command = None
+    touchdown_valid_since = None
+    recovery_climb_until = None
 
     # These filters are deliberately independent: light/large ArUco is the
     # acquisition source, while ID 0 is the precision landing source.
@@ -425,6 +457,7 @@ async def run_mission(light_stop_event, drone):
                 small_measurement, aruco_timestamp
             )
             last_aruco_time = aruco_timestamp
+            last_aruco_range = float(aruco_position[2])
 
         # In large-ArUco acquisition mode the detector may publish ID 0 on one
         # frame and ID 2 on the next. Keep the last fresh acquisition estimate
@@ -439,19 +472,51 @@ async def run_mission(light_stop_event, drone):
             light_velocity = acquisition_filter.velocity.copy()
 
         print('light_position status', light_position)
+        print('small ArUco pose estimate', aruco_position)
         flight_logger.log("control_sample", state=state, light_position=light_position, light_velocity=light_velocity, aruco_position=aruco_position, aruco_velocity=aruco_velocity)
 
         if state == "HOVER":
             await send_velocity(drone, np.zeros(3))
-            if light_position is not None:
+            handoff_range_limit = (
+                ARUCO_HANDOFF_HOLD_RANGE_M
+                if aruco_valid_since is not None
+                else ARUCO_HANDOFF_ENTRY_RANGE_M
+            )
+            if aruco_position is not None and aruco_position[2] <= handoff_range_limit:
+                aruco_valid_since = aruco_valid_since or now
+                if now - aruco_valid_since >= ARUCO_STABLE_TIME:
+                    if AUTONOMY_START_MODE == "rc_handover" and not offboard_active:
+                        print("Stable small ArUco lock: requesting Offboard control.")
+                        await start_offboard_control(drone)
+                        offboard_active = ENABLE_AUTONOMY
+                    state = "ARUCO_TRACK"
+                    aligned_since = None
+                    print("Stable small ArUco lock: switching control source.")
+                else:
+                    print(
+                        "ArUco handoff blocked in HOVER: waiting for stable lock "
+                        f"({now - aruco_valid_since:.2f}/{ARUCO_STABLE_TIME:.2f} s)."
+                    )
+            elif aruco_position is not None:
+                print(
+                    "ArUco handoff blocked in HOVER: marker range "
+                    f"{aruco_position[2]:.2f} m exceeds "
+                    f"{handoff_range_limit:.2f} m."
+                )
+            elif light_position is not None:
+                aruco_valid_since = None
                 state = "LIGHT_TRACK"
                 print("Light target acquired.")
+            else:
+                aruco_valid_since = None
+                print("HOVER: waiting for either the light target or small ArUco.")
 
         if state == "LIGHT_TRACK":
             if light_position is None:
                 light_stable_since = None
                 state = "HOVER"
                 await send_velocity(drone, np.zeros(3))
+                print("LIGHT_TRACK -> HOVER: acquisition target lost.")
             else:
                 if AUTONOMY_START_MODE == "rc_handover" and not offboard_active:
                     # Do not take control merely because the marker appears in
@@ -483,10 +548,12 @@ async def run_mission(light_stop_event, drone):
 
                 # Both acquisition modes use the same handoff: the small
                 # precision marker must be continuously visible and stable.
-                if (
-                    aruco_position is not None
-                    and aruco_position[2] <= ARUCO_TRACK_RANGE_M
-                ):
+                handoff_range_limit = (
+                    ARUCO_HANDOFF_HOLD_RANGE_M
+                    if aruco_valid_since is not None
+                    else ARUCO_HANDOFF_ENTRY_RANGE_M
+                )
+                if aruco_position is not None and aruco_position[2] <= handoff_range_limit:
                     agreement = float(np.linalg.norm(aruco_position - light_position))
                     if agreement <= ARUCO_LIGHT_AGREEMENT_M:
                         aruco_valid_since = aruco_valid_since or now
@@ -494,10 +561,27 @@ async def run_mission(light_stop_event, drone):
                             state = "ARUCO_TRACK"
                             aligned_since = None
                             print("Stable small ArUco lock: switching control source.")
+                        else:
+                            print(
+                                "ArUco handoff blocked in LIGHT_TRACK: waiting for stable lock "
+                                f"({now - aruco_valid_since:.2f}/{ARUCO_STABLE_TIME:.2f} s)."
+                            )
                     else:
                         aruco_valid_since = None
+                        print(
+                            "ArUco handoff blocked in LIGHT_TRACK: light/ArUco disagreement "
+                            f"{agreement:.2f} m exceeds {ARUCO_LIGHT_AGREEMENT_M:.2f} m."
+                        )
+                elif aruco_position is not None:
+                    aruco_valid_since = None
+                    print(
+                        "ArUco handoff blocked in LIGHT_TRACK: marker range "
+                        f"{aruco_position[2]:.2f} m exceeds "
+                        f"{handoff_range_limit:.2f} m."
+                    )
                 else:
                     aruco_valid_since = None
+                    print("ArUco handoff blocked in LIGHT_TRACK: small ArUco not visible.")
 
         elif state == "ARUCO_TRACK":
             if aruco_position is None:
@@ -516,8 +600,13 @@ async def run_mission(light_stop_event, drone):
                 orientation_ok = aruco_tilt is not None and aruco_tilt <= MAX_LANDING_TILT_DEG
                 print('orientation_ok', orientation_ok)
                 print(is_centered(aruco_position, aruco_velocity))
-                orientation_ok = True
-                if aruco_position[2] <= ARUCO_TRACK_RANGE_M and is_centered(aruco_position, aruco_velocity) and orientation_ok:
+                #orientation_ok = True
+                final_descent_range_limit = (
+                    FINAL_DESCENT_HOLD_RANGE_M
+                    if aligned_since is not None
+                    else FINAL_DESCENT_ENTRY_RANGE_M
+                )
+                if aruco_position[2] <= final_descent_range_limit and is_centered(aruco_position, aruco_velocity) and orientation_ok:
                     aligned_since = aligned_since or now
                     if now - aligned_since >= max(ALIGN_HOLD_TIME, ORIENTATION_HOLD_TIME):
                         range_reference = float(aruco_position[2])
@@ -535,6 +624,18 @@ async def run_mission(light_stop_event, drone):
                 return
             await send_velocity(drone, predicted_landing_command)
 
+        elif state == "VISION_RECOVERY_CLIMB":
+            if now < recovery_climb_until:
+                await send_velocity(drone, np.array([0.0, 0.0, -VISION_LOSS_CLIMB_SPEED]))
+                print(
+                    "Vision recovery climb in progress: "
+                    f"{recovery_climb_until - now:.2f} s remaining."
+                )
+            else:
+                recovery_climb_until = None
+                state = "HOVER"
+                print("Vision recovery climb complete: resuming target acquisition.")
+
         elif state == "FINAL_DESCENT":
             if aruco_position is None:
                 # Cancel descent immediately when the small precision marker is
@@ -549,9 +650,18 @@ async def run_mission(light_stop_event, drone):
                     last_aruco_time is None
                     or now - last_aruco_time > LOST_MARKER_TIMEOUT
                 ):
-                    print("Vision lost during final descent: climbing and aborting.")
-                    await send_velocity(drone, np.array([0.0, 0.0, -ABORT_CLIMB_SPEED]))
-                    return
+                    climb_distance = max(
+                        0.0,
+                        VISION_LOSS_RECOVERY_RANGE_M - (last_aruco_range or 0.0),
+                    )
+                    recovery_climb_until = now + climb_distance / VISION_LOSS_CLIMB_SPEED
+                    state = "VISION_RECOVERY_CLIMB"
+                    aligned_since = None
+                    print(
+                        "Vision lost during final descent: climbing "
+                        f"{climb_distance:.2f} m to recovery range "
+                        f"{VISION_LOSS_RECOVERY_RANGE_M:.2f} m before reacquiring."
+                    )
             else:
                 command = tracking_velocity(aruco_position, aruco_velocity)
 
@@ -577,17 +687,26 @@ async def run_mission(light_stop_event, drone):
 
                 await send_velocity(drone, command)
 
+                predicted_landing_range_limit = (
+                    PREDICTED_LANDING_HOLD_RANGE_M
+                    if touchdown_valid_since is not None
+                    else PREDICTED_LANDING_ENTRY_RANGE_M
+                )
                 if (
-                    aruco_position[2] <= TOUCHDOWN_RANGE_M
+                    aruco_position[2] <= predicted_landing_range_limit
                     and is_centered(aruco_position, aruco_velocity)
                     and aruco_tilt is not None
                     and aruco_tilt <= MAX_LANDING_TILT_DEG
                 ):
-                    predicted_landing_command = command.copy()
-                    predicted_landing_command[2] = PREDICTED_LANDING_DESCENT_SPEED_M_S
-                    predicted_landing_since = now
-                    state = "PREDICTED_LANDING"
-                    print("Close-range marker lock: continuing predicted tracking before landing.")
+                    touchdown_valid_since = touchdown_valid_since or now
+                    if now - touchdown_valid_since >= PREDICTED_LANDING_STABLE_TIME:
+                        predicted_landing_command = command.copy()
+                        predicted_landing_command[2] = PREDICTED_LANDING_DESCENT_SPEED_M_S
+                        predicted_landing_since = now
+                        state = "PREDICTED_LANDING"
+                        print("Close-range marker lock: continuing predicted tracking before landing.")
+                else:
+                    touchdown_valid_since = None
 
         await asyncio.sleep(CONTROL_PERIOD)
 
@@ -628,7 +747,8 @@ async def main():
             except ActionError:
                 pass
         flight_logger.close()
-
+        sys.stdout = terminal
+        log_file.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
