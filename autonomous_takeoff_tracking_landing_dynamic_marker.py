@@ -142,6 +142,7 @@ MAX_CLIMB_SPEED = 0.25
 # global altitude estimate, so the climb duration is calculated from the last
 # valid small-ArUco range.
 LOST_MARKER_TIMEOUT = 0.35
+ENABLE_VISION_LOSS_RECOVERY_CLIMB = False  # Set True to climb and reacquire after losing all vision in final descent.
 VISION_LOSS_RECOVERY_RANGE_M = 3.0 # when vision is lost climb to this range (measured from marker surface) before reacquiring the target
 VISION_LOSS_CLIMB_SPEED = 0.20
 
@@ -678,18 +679,22 @@ async def run_mission(light_stop_event, drone):
                     last_aruco_time is None
                     or now - last_aruco_time > LOST_MARKER_TIMEOUT
                 ):
-                    climb_distance = max(
-                        0.0,
-                        VISION_LOSS_RECOVERY_RANGE_M - (last_aruco_range or 0.0),
-                    )
-                    recovery_climb_until = now + climb_distance / VISION_LOSS_CLIMB_SPEED
-                    state = "VISION_RECOVERY_CLIMB"
                     aligned_since = None
-                    print(
-                        "Vision lost during final descent: climbing "
-                        f"{climb_distance:.2f} m to recovery range "
-                        f"{VISION_LOSS_RECOVERY_RANGE_M:.2f} m before reacquiring."
-                    )
+                    if ENABLE_VISION_LOSS_RECOVERY_CLIMB:
+                        climb_distance = max(
+                            0.0,
+                            VISION_LOSS_RECOVERY_RANGE_M - (last_aruco_range or 0.0),
+                        )
+                        recovery_climb_until = now + climb_distance / VISION_LOSS_CLIMB_SPEED
+                        state = "VISION_RECOVERY_CLIMB"
+                        print(
+                            "Vision lost during final descent: climbing "
+                            f"{climb_distance:.2f} m to recovery range "
+                            f"{VISION_LOSS_RECOVERY_RANGE_M:.2f} m before reacquiring."
+                        )
+                    else:
+                        state = "HOVER"
+                        print("Vision lost during final descent: holding position; recovery climb disabled.")
             else:
                 command = tracking_velocity(aruco_position, aruco_velocity)
 
