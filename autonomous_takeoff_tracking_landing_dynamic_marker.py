@@ -27,7 +27,7 @@ from flight_logging import configure_flight_logger, log_drone_telemetry
 import sys
 
 terminal = sys.stdout
-log_file = open("output.log", "w")
+log_file = open("output4.log", "w")
 
 class Logger:
     def __init__(self, *streams):
@@ -62,8 +62,8 @@ from light_detection_blobbased import (
 # CONFIGURATION
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = False
-ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
-ENABLE_LOGGING = False  # Writes JSONL telemetry and 2 Hz annotated images to ~/logs/.
+ENABLE_AUTONOMY = True  # Change manually only after restrained/bench tests.
+ENABLE_LOGGING = True  # Writes JSONL telemetry and 2 Hz annotated images to ~/logs/.
 ENABLE_LIGHT_MARKER = True  # False: acquire with the large ArUco marker before switching to ID 0.
 TAKEOFF_ALT = 4.5
 TOTAL_TIMEOUT = 700.0
@@ -84,7 +84,7 @@ OFFBOARD_TAKEOVER_STABLE_TIME = 0.25
 # fallback used before an RC-to-Offboard handover captures the current yaw.
 COMMAND_YAW_DEG = 0.0
 command_yaw_deg = COMMAND_YAW_DEG
-BRIGHTNESS_THRESHOLD = 30
+BRIGHTNESS_THRESHOLD = 55
 POSE_TYPE = "target"
 
 # All position vectors below use NED components [north, east, down].
@@ -127,7 +127,7 @@ MAX_LANDING_TILT_DEG = 365.0
 ORIENTATION_HOLD_TIME = 0.75
 KP_LIGHT_Z = 0.45
 MAX_LIGHT_DESCENT_SPEED = 0.5
-TOUCHDOWN_RANGE_M = 0.5  # Must be validated against camera/landing-gear geometry.
+TOUCHDOWN_RANGE_M = 0.35  # Must be validated against camera/landing-gear geometry.
 PREDICTED_LANDING_ENTRY_RANGE_M = 0.45
 PREDICTED_LANDING_HOLD_RANGE_M = 0.55
 PREDICTED_LANDING_STABLE_TIME = 0.20
@@ -697,7 +697,7 @@ async def run_mission(light_stop_event, drone):
                         print("Vision lost during final descent: holding position; recovery climb disabled.")
             else:
                 command = tracking_velocity(aruco_position, aruco_velocity)
-
+                print('is_centered(aruco_position, aruco_velocity):', is_centered(aruco_position, aruco_velocity))
                 if is_centered(aruco_position, aruco_velocity):
                     range_reference = max(
                         TOUCHDOWN_RANGE_M,

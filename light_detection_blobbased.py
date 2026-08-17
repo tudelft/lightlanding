@@ -28,7 +28,7 @@ CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odom
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization =  True
+show_visualization =  False
 drone_attitude_reliable = True
 
 _visualization_lock = threading.Lock()
@@ -59,18 +59,18 @@ mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 # L-shape marker setup
 radius_tol=0.5
-line_tol=10.0
+line_tol=8.0
 min_group_size=4 
 cross_ratio_tol=0.03
 
 # Camera setup
-blur_window = (3, 3) # (9, 9) for monochrome global shutter
-exposure_time_rgb = 3500 # microseconds
+blur_window = (19, 19) # (9, 9) for monochrome global shutter
+exposure_time_rgb = 4000 # microseconds
 exposure_time_mono = 20000 # microseconds
 
 # Pose estimation acceptance criteria
 brightness_threshold = 30 # 60 for monochrome global shutter
-reproj_threshold = 10 # default 5
+reproj_threshold = 20 # default 5
 
 # ArUco setup
 marker_size = 0.120   # meters
@@ -172,8 +172,8 @@ def attitude_listener_mavlink(master):
     
 def detect_lights_sendodometry(
     brightness_threshold,
-    min_area: int = 1,
-    max_area: int = 40000,
+    min_area: int = 10,
+    max_area: int = 400,
 ) -> None:
 
     global camera_matrix_rgb, dist_coeffs_rgb, camera_matrix_mono, dist_coeffs_mono
