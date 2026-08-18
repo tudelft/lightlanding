@@ -15,8 +15,9 @@ def filter_circles_same_line_similar_radius(
     cross_ratio_tol: float = 0.01
 ) -> np.ndarray:
     """
-    Keep circles that belong to a group of circles lying approximately on the
-    same line and having similar radii.
+    Keep circles only when they form the marker's two line groups: each group
+    has four approximately collinear, similarly sized, equally spaced LEDs,
+    and the two groups share exactly one endpoint (the amber corner LED).
 
     Parameters
     ----------
@@ -36,7 +37,8 @@ def filter_circles_same_line_similar_radius(
     Returns
     -------
     np.ndarray
-        Filtered array of circles, shape (M, 3).
+        The seven circles belonging to the two marker arms, or an empty array
+        when no such pair of groups is found.
     """
     circles = np.asarray(circles)
 
@@ -44,10 +46,10 @@ def filter_circles_same_line_similar_radius(
         raise ValueError("circles must have shape (N, 3)")
 
     n = len(circles)
-    if n < min_group_size:
+    if n < 7:
         return np.empty((0, 3), dtype=circles.dtype)
 
-    best_groups = []
+    valid_groups = {}
 
     # Try every pair of circles as a candidate line
     for i in range(n):
@@ -89,30 +91,55 @@ def filter_circles_same_line_similar_radius(
             if len(group_indices) >= min_group_size:
                 valid = False
                 for quad in set(combinations(group_indices, 4)):
+                    quad_radii = circles[list(quad), 2]
+                    quad_mean_radius = float(np.mean(quad_radii))
+                    if (
+                        quad_mean_radius <= 0.0
+                        or np.any(np.abs(quad_radii - quad_mean_radius) > radius_tol * quad_mean_radius)
+                    ):
+                        continue
+
                     projections = []
                     for idx in quad:
                         x, y, _ = circles[idx]
                         t = (x - x1) * ux + (y - y1) * uy
                         projections.append(t)
 
-                    projections = np.sort(np.asarray(projections))
+                    ordered = np.argsort(projections)
+                    projections = np.asarray(projections)[ordered]
                     a, b, c, d = projections
 
                     cr = cross_ratio_1d(a, b, c, d)
                     if np.isfinite(cr) and abs(cr - 4/3) <= cross_ratio_tol:
-                        # print('cross_ratio_tol_ok:', 'True')
                         valid = True
-                        best_groups.extend(quad)
-                        break
+                        group_key = frozenset(quad)
+                        valid_groups[group_key] = {
+                            "indices": group_key,
+                            "endpoints": frozenset((quad[ordered[0]], quad[ordered[-1]])),
+                        }
 
                 if not valid:
                     # print('cross_ratio_tol_ok:', 'False')
                     continue
 
-    best_groups = sorted(set(best_groups))
-    # print('len(best_groups)', len(best_groups))
+    marker_candidates = set()
+    groups = list(valid_groups.values())
+    for first, second in combinations(groups, 2):
+        shared = first["indices"] & second["indices"]
+        if len(shared) != 1:
+            continue
 
-#    if (len(best_groups)%4) != 0:
-#        return np.empty((0, 3), dtype=circles.dtype)
+        shared_index = next(iter(shared))
+        if shared_index not in first["endpoints"] or shared_index not in second["endpoints"]:
+            continue
 
-    return circles[best_groups]
+        selected_indices = first["indices"] | second["indices"]
+        if len(selected_indices) != 7:
+            continue
+
+        marker_candidates.add(frozenset(selected_indices))
+
+    if len(marker_candidates) != 1:
+        return np.empty((0, 3), dtype=circles.dtype)
+
+    return circles[sorted(next(iter(marker_candidates)))]
