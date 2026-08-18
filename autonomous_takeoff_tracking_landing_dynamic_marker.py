@@ -84,7 +84,7 @@ OFFBOARD_TAKEOVER_STABLE_TIME = 0.25
 # fallback used before an RC-to-Offboard handover captures the current yaw.
 COMMAND_YAW_DEG = 0.0
 command_yaw_deg = COMMAND_YAW_DEG
-BRIGHTNESS_THRESHOLD = 55
+BRIGHTNESS_THRESHOLD = 20
 POSE_TYPE = "target"
 
 # All position vectors below use NED components [north, east, down].

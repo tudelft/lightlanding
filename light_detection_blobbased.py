@@ -28,7 +28,7 @@ CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odom
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization =  False
+show_visualization =  True
 drone_attitude_reliable = True
 
 _visualization_lock = threading.Lock()
@@ -58,10 +58,10 @@ rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 # L-shape marker setup
-radius_tol=2.0
-line_tol=5.0
-min_group_size=4 
-cross_ratio_tol=0.02
+radius_tol = 1.5
+line_tol = 5.0
+min_group_size = 4 
+cross_ratio_tol = 0.02
 RIGHT_ANGLE_TOL_DEG = 25.0  # Set to None to disable this image-space check.
 
 # Camera setup
@@ -121,7 +121,7 @@ dist_coeffs_rgb = np.array([-1.99362880e-02, -1.10620253e-03,  1.52169132e-04, -
 #   0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  0.00000000e+00,
 #   0.00000000e+00,  0.00000000e+00])
 
-s_rgb=1.0 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
+s_rgb = 0.9 # scaling down the camera image and intrinsics for faster processing since we only care about large bright blobs (LEDs)
 s_aruco = 0.65
 latest_attitude = None
 latest_attitude_time = None
