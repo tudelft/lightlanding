@@ -52,6 +52,7 @@ def filter_circles_same_line_similar_radius(
         raise ValueError("right_angle_tol_deg must be in [0, 90), or None")
 
     n = len(circles)
+    print('Total detected circles in the image:', len(circles))
     if n < 7:
         return np.empty((0, 3), dtype=circles.dtype)
 
@@ -131,6 +132,7 @@ def filter_circles_same_line_similar_radius(
 
     marker_candidates = set()
     groups = list(valid_groups.values())
+    print('Total groups of four LEDs each that passed radii, CR, line, checks', len(groups))
     for first, second in combinations(groups, 2):
         shared = first["indices"] & second["indices"]
         if len(shared) != 1:
@@ -147,6 +149,7 @@ def filter_circles_same_line_similar_radius(
                 continue
 
         selected_indices = first["indices"] | second["indices"]
+        print('Number of detected blobs/LEDs that passed ALL checks:', len(selected_indices))
         if len(selected_indices) != 7:
             continue
 

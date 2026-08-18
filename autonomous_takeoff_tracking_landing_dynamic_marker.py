@@ -68,7 +68,7 @@ ENABLE_LIGHT_MARKER = True  # False: acquire with the large ArUco marker before 
 TAKEOFF_ALT = 4.5
 TOTAL_TIMEOUT = 700.0
 CONTROL_PERIOD = 0.05
-MAX_VISION_AGE_S = 0.30
+MAX_VISION_AGE_S = 0.50
 
 # "auto_takeoff": current behavior--the script arms, starts Offboard, and
 # commands takeoff. "rc_handover": the pilot takes off and approaches in

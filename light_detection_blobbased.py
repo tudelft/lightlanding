@@ -28,7 +28,7 @@ CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odom
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization =  True
+show_visualization =  False
 drone_attitude_reliable = True
 
 _visualization_lock = threading.Lock()
