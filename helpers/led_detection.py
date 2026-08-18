@@ -12,7 +12,8 @@ def filter_circles_same_line_similar_radius(
     radius_tol: float = 0.1,
     line_tol: float = 5.0,
     min_group_size: int = 4,
-    cross_ratio_tol: float = 0.01
+    cross_ratio_tol: float = 0.01,
+    right_angle_tol_deg: float | None = None,
 ) -> np.ndarray:
     """
     Keep circles only when they form the marker's two line groups: each group
@@ -33,6 +34,9 @@ def filter_circles_same_line_similar_radius(
         Minimum number of circles needed to form a valid line group.
     cross_ratio_tol : float
         Tolerance for the cross-ratio test to identify equally spaced points.
+    right_angle_tol_deg : float | None
+        Maximum deviation from 90 degrees between the two line groups. Set to
+        ``None`` to disable the image-space right-angle check.
 
     Returns
     -------
@@ -44,6 +48,8 @@ def filter_circles_same_line_similar_radius(
 
     if circles.ndim != 2 or circles.shape[1] != 3:
         raise ValueError("circles must have shape (N, 3)")
+    if right_angle_tol_deg is not None and not 0.0 <= right_angle_tol_deg < 90.0:
+        raise ValueError("right_angle_tol_deg must be in [0, 90), or None")
 
     n = len(circles)
     if n < 7:
@@ -116,6 +122,7 @@ def filter_circles_same_line_similar_radius(
                         valid_groups[group_key] = {
                             "indices": group_key,
                             "endpoints": frozenset((quad[ordered[0]], quad[ordered[-1]])),
+                            "direction": np.array([ux, uy]),
                         }
 
                 if not valid:
@@ -132,6 +139,12 @@ def filter_circles_same_line_similar_radius(
         shared_index = next(iter(shared))
         if shared_index not in first["endpoints"] or shared_index not in second["endpoints"]:
             continue
+
+        if right_angle_tol_deg is not None:
+            cosine = abs(float(np.dot(first["direction"], second["direction"])))
+            image_angle_deg = float(np.degrees(np.arccos(np.clip(cosine, 0.0, 1.0))))
+            if abs(90.0 - image_angle_deg) > right_angle_tol_deg:
+                continue
 
         selected_indices = first["indices"] | second["indices"]
         if len(selected_indices) != 7:

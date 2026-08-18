@@ -62,6 +62,7 @@ radius_tol=2.0
 line_tol=5.0
 min_group_size=4 
 cross_ratio_tol=0.02
+RIGHT_ANGLE_TOL_DEG = 25.0  # Set to None to disable this image-space check.
 
 # Camera setup
 blur_window = (19, 19) # (9, 9) for monochrome global shutter
@@ -416,7 +417,10 @@ def detect_lights_sendodometry(
             circles = circles[order]
             
             # fitered_circles = circles
-            fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol, line_tol, min_group_size, cross_ratio_tol) #cr: 0.015
+            fitered_circles = filter_circles_same_line_similar_radius(
+                circles, radius_tol, line_tol, min_group_size, cross_ratio_tol,
+                RIGHT_ANGLE_TOL_DEG,
+            )
             filteredcircles_avgcolor = []
             print('filtered circles', len(fitered_circles))
 
@@ -966,7 +970,10 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         circles = circles[order]
         
         # fitered_circles = circles
-        fitered_circles = filter_circles_same_line_similar_radius(circles, radius_tol, line_tol, min_group_size, cross_ratio_tol) #cr: 0.015
+        fitered_circles = filter_circles_same_line_similar_radius(
+            circles, radius_tol, line_tol, min_group_size, cross_ratio_tol,
+            RIGHT_ANGLE_TOL_DEG,
+        )
         filteredcircles_avgcolor = []
 #            print('filtered circles', len(fitered_circles))
 
