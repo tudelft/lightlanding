@@ -28,7 +28,7 @@ CONNECT_MAVLINK = True             # Whether to connect to MAVLink and send odom
 MAVLINK_MULTIPLE_CONNECTIONS = True  # If we are also sending Mocap data to drone on serial then set this to True to avoid conflicts. Requires mavlink_routerd running on the pi.
 
 markertype = 'Lshape'  # 'Lshape' or 'aruco'
-show_visualization =  False
+show_visualization =  True
 drone_attitude_reliable = True
 
 _visualization_lock = threading.Lock()
@@ -58,18 +58,18 @@ rgb_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 mono_cameratype = 'fisheye' # 'fisheye' or 'pinhole'
 
 # L-shape marker setup
-radius_tol=0.5
-line_tol=8.0
+radius_tol=2.0
+line_tol=5.0
 min_group_size=4 
-cross_ratio_tol=0.03
+cross_ratio_tol=0.02
 
 # Camera setup
 blur_window = (19, 19) # (9, 9) for monochrome global shutter
-exposure_time_rgb = 4000 # microseconds
+exposure_time_rgb = 5000 # microseconds
 exposure_time_mono = 20000 # microseconds
 
 # Pose estimation acceptance criteria
-brightness_threshold = 30 # 60 for monochrome global shutter
+brightness_threshold = 20 #  filters the brightest pixels in the image
 reproj_threshold = 20 # default 5
 
 # ArUco setup
@@ -864,7 +864,8 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         patch_y, patch_x = np.ogrid[y0:y1, x0:x1]
         disk = ((patch_x - center_x) ** 2 + (patch_y - center_y) ** 2
                 <= effective_radius ** 2)
-        return int(patch[disk].mean())
+
+        return int(np.median(patch[disk])) #.mean()
         
     while not stop_event.is_set():
     # while True:
@@ -887,11 +888,6 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 #        frame = cv2.rotate(frame, cv2.ROTATE_180) # rotation was needed for mono camera, but not for rgb camera
         height, width  = frame.shape[:2]
 
-        red = frame[:, :, 0]
-        green = frame[:, :, 1]
-
-        green = diff_image_RG = red.astype(np.int16) - green.astype(np.int16)
-
         if map_size != (width, height):
             new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
                 camera_matrix,
@@ -913,8 +909,12 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
         image_undistorted = cv2.remap(
             frame, map1, map2, interpolation=cv2.INTER_LINEAR)
 
-        green_undistorted = cv2.remap(
-            green, map1, map2, interpolation=cv2.INTER_LINEAR)
+        red = image_undistorted[:, :, 0]
+        green = image_undistorted[:, :, 1]
+
+        diff_image_RG = red.astype(np.int16) - green.astype(np.int16)
+        lab = cv2.cvtColor(image_undistorted, cv2.COLOR_RGB2LAB)
+        lab_a = lab[:, : , 1]
 
 #            print('Searching for LEDs...')
         blurred = cv2.GaussianBlur(image_undistorted, blur_window, 0)
@@ -974,7 +974,7 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
             center = (int(circle[0]), int(circle[1]))
             radius = int(circle[2])
             led_mean = local_circle_mean(
-                green_undistorted, center, radius, radius_scale=math.sqrt(0.3)
+                lab_a, center, radius, radius_scale=math.sqrt(0.8) # diff_image_RG or lab_a
             )
 #            led_mean = green_undistorted[center]
             filteredcircles_avgcolor.append(led_mean)
@@ -987,8 +987,8 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
                 # Draw annotation
                 center = (int(circle[0]), int(circle[1]))
                 radius = int(circle[2])
-                led_mean = local_circle_mean(green_undistorted, center, radius)
-                led_type = np.where(filteredcircles_avgcolor_sorted==led_count)[0] <= 2  #first 4 LEDs based on min avg intensity
+                led_mean = local_circle_mean(lab_a, center, radius)
+                led_type = np.where(filteredcircles_avgcolor_sorted==led_count)[0] <= 2  #first 3 LEDs based on min avg intensity
                 ann_circle_color = (0,255,0) if (led_type==1) else (0,0,255)
                 
                 filteredcircles_avgcolor.append(led_mean)

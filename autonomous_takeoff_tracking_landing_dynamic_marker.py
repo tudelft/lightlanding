@@ -27,7 +27,7 @@ from flight_logging import configure_flight_logger, log_drone_telemetry
 import sys
 
 terminal = sys.stdout
-log_file = open("output4.log", "w")
+log_file = open("temp.log", "w")
 
 class Logger:
     def __init__(self, *streams):
@@ -62,8 +62,8 @@ from light_detection_blobbased import (
 # CONFIGURATION
 # =========================
 MAVLINK_MULTIPLE_CONNECTIONS = False
-ENABLE_AUTONOMY = True  # Change manually only after restrained/bench tests.
-ENABLE_LOGGING = True  # Writes JSONL telemetry and 2 Hz annotated images to ~/logs/.
+ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
+ENABLE_LOGGING = False  # Writes JSONL telemetry and 2 Hz annotated images to ~/logs/.
 ENABLE_LIGHT_MARKER = True  # False: acquire with the large ArUco marker before switching to ID 0.
 TAKEOFF_ALT = 4.5
 TOTAL_TIMEOUT = 700.0
