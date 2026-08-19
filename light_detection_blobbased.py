@@ -9,18 +9,13 @@ from scipy.spatial.distance import cdist
 import asyncio
 
 import os
-os.environ["MAVLINK20"] = "1"
-os.environ["MAVLINK_DIALECT"] = "common"
-from pymavlink import mavutil
 
 from helpers.utils import scale_camera_matrix, rotate_intrinsics_180
-from helpers.mavlink_utils import get_fc_time_us, wait_cmd_ack, request_message, recv_one, set_global_origin
 from helpers.poseestimation import pose_from_colored_leds, estimate_planar_pose, order_l_shape_markers
 from helpers.led_detection import filter_circles_same_line_similar_radius, cross_ratio_1d   
 from landing_config import *
 
 # Runtime state; tunable values are imported from landing_config.py.
-markertype = MARKER_TYPE
 show_visualization = SHOW_VISUALIZATION
 drone_attitude_reliable = True
 radius_tol = RADIUS_TOLERANCE
@@ -34,7 +29,6 @@ reproj_threshold = LIGHT_REPROJECTION_THRESHOLD_PX
 target_id = SMALL_ARUCO_MARKER_ID
 marker_size = SMALL_ARUCO_MARKER_SIZE_M
 aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICTIONARY_ID)
-serial_ip = PYMAVLINK_UDP_URL if MAVLINK_MULTIPLE_CONNECTIONS else PYMAVLINK_SERIAL_URL
 detector_params = cv2.aruco.DetectorParameters()
 detector = cv2.aruco.ArucoDetector(aruco_dict, detector_params)
 camera_matrix_mono = CAMERA_MATRIX_MONO.copy()
