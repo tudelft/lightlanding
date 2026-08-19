@@ -9,7 +9,7 @@ is started before the handoff and must be stable before it becomes the control
 source.  During final descent the ArUco controller remains active, so the drone
 continues to follow lateral marker motion.
 
-Set ENABLE_AUTONOMY=False for bench testing.  Tune every value below and verify
+Set ENABLE_AUTONOMY=False in landing_config.py for bench testing. Tune settings there and verify
 the NED signs with the vehicle restrained before enabling flight.
 """
 
@@ -25,6 +25,7 @@ from mavsdk.telemetry import FlightMode, LandedState
 from scipy.spatial.transform import Rotation as R
 from flight_logging import configure_flight_logger, log_drone_telemetry
 import sys
+from landing_config import *
 
 terminal = sys.stdout
 log_file = open("temp.log", "w")
@@ -58,101 +59,8 @@ from light_detection_blobbased import (
     visualization_loop,
 )
 
-# =========================
-# CONFIGURATION
-# =========================
-MAVLINK_MULTIPLE_CONNECTIONS = False
-ENABLE_AUTONOMY = False  # Change manually only after restrained/bench tests.
-ENABLE_LOGGING = False  # Writes JSONL telemetry and 2 Hz annotated images to ~/logs/.
-ENABLE_LIGHT_MARKER = True  # False: acquire with the large ArUco marker before switching to ID 0.
-TAKEOFF_ALT = 4.5
-TOTAL_TIMEOUT = 700.0
-CONTROL_PERIOD = 0.05
-MAX_VISION_AGE_S = 0.50
-
-# "auto_takeoff": current behavior--the script arms, starts Offboard, and
-# commands takeoff. "rc_handover": the pilot takes off and approaches in
-# Position/Mission mode; Offboard starts only after a stable light-marker lock.
-AUTONOMY_START_MODE = "rc_handover" # auto_takeoff or rc_handover
-# Used only when AUTONOMY_START_MODE == "rc_handover". Values are relative
-# marker-to-drone quantities, in metres and metres/second.
-OFFBOARD_TAKEOVER_RANGE_M = 8.0
-OFFBOARD_TAKEOVER_MAX_SPEED_M_S = 1.0
-OFFBOARD_TAKEOVER_STABLE_TIME = 0.25
-
-# VelocityNedYaw's yaw argument is an absolute NED yaw. This is only the
-# fallback used before an RC-to-Offboard handover captures the current yaw.
-COMMAND_YAW_DEG = 0.0
 command_yaw_deg = COMMAND_YAW_DEG
-BRIGHTNESS_THRESHOLD = 20
-POSE_TYPE = "target"
-
-# All position vectors below use NED components [north, east, down].
-# This is p_aruco - p_light: vector from the light-marker origin to the ArUco
-# landing origin.  Measure this for your assembly.  With no calibration, leave
-# zero: ArUco takes over before final landing, so this only biases light tracking.
-# A constant NED offset is valid only while the attached marker assembly does not
-# yaw appreciably.  The current target-pose interfaces do not expose target yaw.
-LIGHT_TO_ARUCO_OFFSET_NED = np.array([0.0, 0.0, 0.0], dtype=float) # optional, could be kept to [0,0,0] if not known
-
-# Begin looking for ArUco while light tracking once the landing marker is in this
-# box.  Do not hand over until ARUCO_STABLE_TIME has elapsed with valid ArUco data.
-ARUCO_START_BOX = np.array([3.5, 3.5, 3.5], dtype=float)
-ARUCO_STABLE_TIME = 0.25 # seconds: ArUco must be valid for this long before switching to ArUco control.
-LARGE_ARUCO_MARKER_ID = 2  # Unique ID of the large daytime/acquisition marker.
-LARGE_ARUCO_MARKER_SIZE_M = 1.0  # Measure and set the printed side length exactly.
-SMALL_ARUCO_MARKER_ID = 0  # Precision landing marker.
-ARUCO_LIGHT_AGREEMENT_M = 1.5  # meters: ArUco and light must agree within this distance to switch to ArUco control. If LIGHT_TO_ARUCO_OFFSET_NED is set, make this value lower (0.2-0.5).
-
-# Horizontal tracking, applied to the desired ArUco landing origin.
-KP_XY = 0.5
-KD_XY = 0.4
-MAX_HORIZONTAL_SPEED = 0.8
-POSE_FILTER_ALPHA = 0.75
-VELOCITY_FILTER_ALPHA = 0.75
-
-# Do not descend until the marker is well centered and its relative lateral
-# motion is manageable.  Keep following it whenever descent is paused.
-ARUCO_HANDOFF_ENTRY_RANGE_M = 2.5 # ARUCO_TRACK follows the aruco but does not descend, thus the FINAL_DESCENT_ENTRY_RANGE_M is also kept equal or higher to this
-ARUCO_HANDOFF_HOLD_RANGE_M = 2.8
-FINAL_DESCENT_ENTRY_RANGE_M = 2.7
-FINAL_DESCENT_HOLD_RANGE_M = 2.85
-LIGHT_ACQUISITION_RANGE_M = 2.0 # Should be less than ARUCO_HANDOFF_ENTRY_RANGE_M, but not too small to avoid losing the light target before ArUco is acquired.
-LIGHT_DESCENT_ALIGN_RADIUS_M = 0.80
-
-ALIGN_RADIUS_M = 0.80
-ALIGN_SPEED_M_S = 0.50
-ALIGN_HOLD_TIME = 0.75
-MAX_LANDING_TILT_DEG = 365.0
-ORIENTATION_HOLD_TIME = 0.75
-KP_LIGHT_Z = 0.45
-MAX_LIGHT_DESCENT_SPEED = 0.5
-TOUCHDOWN_RANGE_M = 0.35  # Must be validated against camera/landing-gear geometry.
-PREDICTED_LANDING_ENTRY_RANGE_M = 0.45
-PREDICTED_LANDING_HOLD_RANGE_M = 0.55
-PREDICTED_LANDING_STABLE_TIME = 0.20
-DESCENT_RATE_M_S = 0.2 # When in FINAL_DESCENT, the range reference is decremented at this rate.  The controller will try to follow it, but will not descend while off-center.
-KP_Z = 0.80
-KD_Z = 0.20
-MAX_DESCENT_SPEED = 0.75
-MAX_CLIMB_SPEED = 0.25
-
-# If vision is absent in final descent, climb back to this marker-relative range
-# before trying to acquire and track the target again. The controller has no
-# global altitude estimate, so the climb duration is calculated from the last
-# valid small-ArUco range.
-LOST_MARKER_TIMEOUT = 0.35
-ENABLE_VISION_LOSS_RECOVERY_CLIMB = False  # Set True to climb and reacquire after losing all vision in final descent.
-VISION_LOSS_RECOVERY_RANGE_M = 3.0 # when vision is lost climb to this range (measured from marker surface) before reacquiring the target
-VISION_LOSS_CLIMB_SPEED = 0.20
-
-# Once the marker reaches TOUCHDOWN_RANGE_M it can leave the camera field of
-# view. Continue the last lateral tracking command for this short, fixed
-# interval while descending, then let PX4 complete the landing.
-PREDICTED_LANDING_TIME_S = 1.5
-PREDICTED_LANDING_DESCENT_SPEED_M_S = 0.5
-
-SERIAL_IP = "serial:///dev/ttyACM0:115200" if not MAVLINK_MULTIPLE_CONNECTIONS else "udpin://127.0.0.1:14600"
+SERIAL_IP = MAVSDK_UDP_URL if MAVLINK_MULTIPLE_CONNECTIONS else MAVSDK_SERIAL_URL
 flight_logger = configure_flight_logger(ENABLE_LOGGING)
 
 def clip(value, limit):
