@@ -9,8 +9,8 @@ import numpy as np
 
 # Primary switches
 ENABLE_AUTONOMY = False  # Enables arming/offboard flight in the autonomous landing script; keep False for bench tests.
-ENABLE_LOGGING = False  # Enables JSONL telemetry and annotated-image logging during autonomous landing.
-SHOW_VISUALIZATION = True  # Shows OpenCV debug windows produced by the vision workers.
+ENABLE_LOGGING = True  # Enables JSONL telemetry and annotated-image logging during autonomous landing.
+SHOW_VISUALIZATION = False  # Shows OpenCV debug windows produced by the vision workers.
 
 # Autonomous flight and offboard handover
 AUTONOMY_START_MODE = "rc_handover"  # "auto_takeoff" arms/takes off; "rc_handover" waits for a stable light lock before Offboard.
@@ -19,7 +19,7 @@ TOTAL_TIMEOUT = 700.0  # [s] Maximum total autonomous-landing runtime before the
 CONTROL_PERIOD = 0.05  # [s] Interval between offboard-controller updates, i.e., control loop frequency.
 MAX_VISION_AGE_S = 0.50  # [s] Discards light/ArUco measurements older than this before control uses them.
 OFFBOARD_TAKEOVER_RANGE_M = 6.5  # [m] Maximum marker range that allows RC-to-Offboard handover.
-OFFBOARD_TAKEOVER_MAX_SPEED_M_S = 1.0  # [m/s] Maximum relative marker speed that allows handover.
+OFFBOARD_TAKEOVER_MAX_SPEED_M_S = 2.5  # [m/s] Maximum relative marker speed that allows handover.
 OFFBOARD_TAKEOVER_STABLE_TIME = 0.4  # [s] Required continuous valid light lock before handover. With the current vision latency, means about 4-8 consecutive frames with light detection.
 COMMAND_YAW_DEG = 0.0  # [deg] Fallback absolute NED yaw before RC handover captures the vehicle yaw.
 
@@ -31,7 +31,7 @@ MAVSDK_UDP_URL = "udpin://127.0.0.1:14600"  # MAVSDK endpoint selected when MAVL
 
 # Visual-marker and camera selection
 POSE_TYPE = "target"  # Pose worker mode: "target" estimates marker relative to drone; "drone" estimates drone relative to marker.
-ENABLE_LIGHT_MARKER = True  # Autonomous landing: use light-marker acquisition before switching to precision ArUco.
+ENABLE_LIGHT_MARKER = False  # Autonomous landing: use light-marker acquisition before switching to precision ArUco.
 RGB_CAMERA_PORT = 0  # Picamera2 device index used by the RGB/L-shape worker.
 MONO_CAMERA_PORT = 1  # Picamera2 device index used by the monochrome ArUco worker.
 RGB_CAMERA_TYPE = "fisheye"  # Selects fisheye or pinhole undistortion path for the RGB camera.
@@ -40,9 +40,9 @@ RGB_IMAGE_SCALE = 0.9  # Downscales RGB frames and intrinsics to trade accuracy 
 ARUCO_IMAGE_SCALE = 0.65  # Downscales monochrome frames and intrinsics for ArUco detection.
 
 # LED detector
-BRIGHTNESS_THRESHOLD = 20  # [0-255] Grayscale threshold for pixels considered LED candidates.
+BRIGHTNESS_THRESHOLD = 50  # [0-255] Grayscale threshold for pixels considered LED candidates.
 LIGHT_MIN_AREA = 5  # [px²] Rejects LED contours smaller than this in the light-pose worker.
-LIGHT_MAX_AREA = 500  # [px²] Rejects LED contours larger than this in the light-pose worker.
+LIGHT_MAX_AREA = 3000  # [px²] Rejects LED contours larger than this in the light-pose worker.
 RADIUS_TOLERANCE = 1.5  # [px] Maximum radius difference when grouping LED blobs into an L-shape.
 LINE_TOLERANCE = 5.0  # [px] Maximum distance from a line when grouping LED blobs.
 MIN_LED_GROUP_SIZE = 4  # Minimum number of aligned blobs required by the L-shape grouping filter.
@@ -50,7 +50,7 @@ CROSS_RATIO_TOLERANCE = 0.02  # Allowed cross-ratio error when validating LED sp
 RIGHT_ANGLE_TOLERANCE_DEG = 25.0  # [deg] Allowed L-shape corner-angle error; set None to disable this check.
 BLUR_WINDOW = (19, 19)  # [px, px] Gaussian blur kernel applied before LED thresholding; values must be odd.
 LIGHT_REPROJECTION_THRESHOLD_PX = 20.0  # [px] Light-pose error limit for debug display/annotation.
-LIGHT_PUBLISH_REPROJECTION_THRESHOLD_PX = 10.0  # [px] Stricter light-pose error limit required before publishing a control measurement.
+LIGHT_PUBLISH_REPROJECTION_THRESHOLD_PX = 15.0  # [px] Stricter light-pose error limit required before publishing a control measurement.
 
 # ArUco detector and marker geometry
 ARUCO_DICTIONARY_ID = 0  # OpenCV dictionary passed to getPredefinedDictionary; 0 is cv2.aruco.DICT_4X4_50.
@@ -59,7 +59,7 @@ SMALL_ARUCO_MARKER_SIZE_M = 0.120  # [m] Printed side length of the precision ma
 LARGE_ARUCO_MARKER_ID = 2  # Marker ID of the larger acquisition marker used before the precision handover.
 LARGE_ARUCO_MARKER_SIZE_M = 1.0  # [m] Printed side length of the larger acquisition marker.
 MAX_ATTITUDE_AGE_S = 0.15  # [s] Reserved: currently not checked by the vision/control code.
-MAX_ARUCO_REPROJECTION_ERROR_PX = 3.0  # [px] Reserved: currently not checked by the vision/control code.
+MAX_ARUCO_REPROJECTION_ERROR_PX = 5.0  # [px] Reserved: currently not checked by the vision/control code.
 # MAX_ARUCO_RANGE_M = 6.0  # [m] Reserved disabled limit; currently no ArUco range gate is implemented.
 
 # Camera setup
@@ -77,11 +77,11 @@ KD_XY = 0.4  # Horizontal relative-velocity damping gain.
 MAX_HORIZONTAL_SPEED = 2.0  # [m/s] Clamp on commanded north/east tracking speed.
 POSE_FILTER_ALPHA = 0.75  # Low-pass weight for new relative-position measurements (higher = less smoothing).
 VELOCITY_FILTER_ALPHA = 0.75  # Low-pass weight for estimated relative velocity (higher = less smoothing).
-ARUCO_HANDOFF_ENTRY_RANGE_M = 2.5  # [m] Enter ArUco tracking (without descent) below this marker range.
-ARUCO_HANDOFF_HOLD_RANGE_M = 2.8  # [m] Leave ArUco tracking only above this range; provides hysteresis.
-FINAL_DESCENT_ENTRY_RANGE_M = 2.7  # [m] Enter final descent below this ArUco marker range.
-FINAL_DESCENT_HOLD_RANGE_M = 2.85  # [m] Pause/leave final descent above this range; provides hysteresis.
-LIGHT_ACQUISITION_RANGE_M = 2.0  # [m] The height above the marker that drone will come down to and keep maintained in case of light tracking
+ARUCO_HANDOFF_ENTRY_RANGE_M = 2.2  # [m] Enter ArUco tracking (without descent) below this marker range.
+ARUCO_HANDOFF_HOLD_RANGE_M = 2.5  # [m] Leave ArUco tracking only above this range; provides hysteresis.
+FINAL_DESCENT_ENTRY_RANGE_M = 2.2  # [m] Enter final descent below this ArUco marker range.
+FINAL_DESCENT_HOLD_RANGE_M = 2.5  # [m] Pause/leave final descent above this range; provides hysteresis.
+LIGHT_ACQUISITION_RANGE_M = 1.8  # [m] The height above the marker that drone will come down to and keep maintained in case of light tracking
 LIGHT_DESCENT_ALIGN_RADIUS_M = 0.80  # [m] Lateral error limit for light-marker-based descent while tracking the light marker.
 
 # Alignment, descent, touchdown, and vision-loss recovery
