@@ -349,7 +349,7 @@ async def run_mission(light_stop_event, drone):
             elif offboard_active and offboard_mode_confirmed:
                 # The pilot switched PX4 away from Offboard. Reset to HOVER so
                 # the normal stable visual-lock checks control any re-entry.
-                offboard_active = False
+                # offboard_active = False  # Keep the latch set so Offboard is never requested again after an RC override.
                 offboard_mode_confirmed = False
                 state = "HOVER"
                 aruco_valid_since = None
