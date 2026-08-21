@@ -1,93 +1,296 @@
-# lightlanding
+# LightLanding
 
+Autonomous drone landing system for detecting and landing on a **light marker** or **ArUco marker** using a Raspberry Pi 5, PX4, MAVLink, and QGroundControl (QGC).
 
+The Raspberry Pi runs the landing and vision software onboard the drone and communicates with the Ground Control Station (GCS) over a shared WiFi connection.
 
-## Getting started
+---
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## System Overview
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+The setup consists of:
 
-## Add your files
+* **Drone / PX4 flight controller**
+* **Raspberry Pi 5 (RPi 5)** onboard the drone
+* **Ground Control Station (GCS)** laptop
+* **QGroundControl (QGC)**
+* **RC transmitter**
+* **Light marker and/or ArUco marker**
+* Laptop WiFi hotspot used for communication between the GCS and Raspberry Pi
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+The Raspberry Pi communicates with PX4 through:
 
+```text
+/dev/ttyACM0
 ```
-cd existing_repo
-git remote add origin https://gitlab.tudelft.nl/mzaffar/lightlanding.git
-git branch -M main
-git push -uf origin main
+
+at a baud rate of:
+
+```text
+921600
 ```
 
-## Integrate with your tools
+Telemetry is forwarded using `mavlink-routerd`.
 
-* [Set up project integrations](https://gitlab.tudelft.nl/mzaffar/lightlanding/-/settings/integrations)
+---
 
-## Collaborate with your team
+# 1. Initial GCS–Drone Telemetry Setup
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+This setup should be performed when configuring a new GCS laptop.
 
-## Test and Deploy
+> **Important:** During network configuration you may temporarily lose SSH access to the Raspberry Pi. Connect the RPi 5 directly to an LCD, keyboard, and mouse before starting. The password for this account on RPi5 has been privately communicated.
 
-Use the built-in continuous integration in GitLab.
+## 1.1 Connect the Raspberry Pi to the Laptop Hotspot
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+Turn on the WiFi hotspot on the GCS laptop.
 
-***
+Then connect the Raspberry Pi 5 to that hotspot.
 
-# Editing this README
+On the Raspberry Pi, determine its current IP address:
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+```bash
+hostname -I
+```
 
-## Suggestions for a good README
+Because this address may change over time, configure a static IP for the laptop hotspot connection.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+---
 
-## Name
-Choose a self-explaining name for your project.
+## 1.2 Configure a Static IP
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+The expected network configuration is:
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+```text
+Laptop / Gateway: 10.42.0.1
+Raspberry Pi:     10.42.0.5
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+On the Raspberry Pi, run:
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```bash
+sudo nmcli connection modify "MyLaptopHotspot" \
+    ipv4.method manual \
+    ipv4.addresses 10.42.0.5/24 \
+    ipv4.gateway 10.42.0.1 \
+    ipv4.dns 10.42.0.1
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Replace:
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```text
+MyLaptopHotspot
+```
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+with the actual name of your laptop's hotspot connection.
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+After configuration, the Raspberry Pi IP should be:
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```text
+10.42.0.5
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+---
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+## 1.3 Configure SSH Access
 
-## License
-For open source projects, say how it is licensed.
+From the GCS laptop, copy your public SSH key to the Raspberry Pi:
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+```bash
+ssh-copy-id mzaffar@10.42.0.5
+```
+
+Password authentication is enabled on the Raspberry Pi for the initial key installation. The password has been privately communicated.
+
+> **Security:** Do not store the Raspberry Pi password in this repository or README. Use SSH keys for normal access.
+
+Test the connection:
+
+```bash
+ssh -X mzaffar@10.42.0.5
+```
+
+Both the laptop and Raspberry Pi must be connected through the laptop's hotspot.
+
+If the SSH connection works, the system is ready for outdoor testing.
+
+---
+
+# 2. Outdoor Testing
+
+## 2.1 Start the Network
+
+Turn on the WiFi hotspot on the GCS laptop.
+
+Power up the drone.
+
+The Raspberry Pi should automatically connect to the laptop hotspot.
+
+---
+
+## 2.2 SSH into the Raspberry Pi
+
+From the GCS laptop:
+
+```bash
+ssh mzaffar@10.42.0.5
+```
+
+---
+
+## 2.3 Start MAVLink Routing
+
+On the Raspberry Pi, run:
+
+```bash
+mavlink-routerd /dev/ttyACM0:921600 -e 10.42.0.5:14550
+```
+
+This streams MAVLink data between QGroundControl and PX4.
+
+PX4 is connected to the Raspberry Pi through:
+
+```text
+/dev/ttyACM0:921600
+```
+
+---
+
+## 2.4 Start QGroundControl
+
+Launch **QGroundControl (QGC)** on the GCS laptop.
+
+Verify that telemetry from the drone is visible in QGC before continuing.
+
+---
+
+# 3. Run LightLanding
+
+Open another terminal on the laptop and connect to the Raspberry Pi with X forwarding:
+
+```bash
+ssh -X mzaffar@10.42.0.5
+```
+
+Navigate to the project:
+
+```bash
+cd /home/mzaffar/codes/lightlanding/
+```
+
+Activate the Python virtual environment:
+
+```bash
+source ekoovenv/bin/activate
+```
+
+Run the autonomous landing program:
+
+```bash
+python autonomous_takeoff_tracking_landing_dynamic_marker.py
+```
+
+Startup logs should begin appearing within approximately **2–3 seconds**.
+
+![LightLanding terminal output](lightlanding-terminal-output.png)
+
+---
+
+# 4. Flight Test
+
+> **Warning:** Autonomous flight testing can cause injury or equipment damage. Perform tests in a suitable outdoor area with appropriate safety procedures and maintain the ability to terminate autonomous behavior.
+
+Turn on the RC transmitter. It should connect to the drone automatically.
+
+Verify RC communication before flight by checking controls such as:
+
+* Mode switch
+* Kill switch
+* Other required RC controls
+
+Then:
+
+1. Switch the drone to **Position Mode**.
+2. Disengage the kill switch.
+3. Arm the drone.
+4. Fly the drone close to the landing marker.
+5. Allow the vision system to detect the marker.
+
+When the drone detects either the **light marker** or **ArUco marker** for the configured stable detection period, it will enter **Offboard Mode** and attempt to land on the marker.
+
+---
+
+# 5. Configuration
+
+Landing behavior and vision parameters can be modified in:
+
+```text
+/home/mzaffar/codes/lightlanding/landing_config.py
+```
+
+Logs are stored in:
+
+```text
+/home/mzaffar/logs/
+```
+
+Important configuration parameters include the following.
+
+## `ENABLE_LIGHT_MARKER`
+
+Controls light-marker detection.
+
+Use this to enable or disable light-marker detection depending on the experiment, particularly for different day/night conditions.
+
+---
+
+## `SHOW_VISUALIZATION`
+
+Enables the vision visualization used to inspect light-marker and ArUco detection.
+
+For good light-marker detection, the threshold image should ideally show the lights as:
+
+* Clearly separable blobs
+* Approximately similar in radius
+* Without holes inside the blobs
+* Without distracting surrounding blobs
+
+If the lights are not visible in the threshold image, decrease:
+
+```python
+BRIGHTNESS_THRESHOLD
+```
+
+If irrelevant objects or regions are appearing as blobs, increase:
+
+```python
+BRIGHTNESS_THRESHOLD
+```
+
+---
+
+## `ENABLE_AUTONOMY`
+
+Enables or disables autonomous landing behavior.
+
+> **Important:** When autonomy is enabled, disable `SHOW_VISUALIZATION`.
+
+```python
+ENABLE_AUTONOMY = True
+SHOW_VISUALIZATION = False
+```
+
+Visualization slows down the vision thread. Running it during autonomous operation can therefore cause the drone to act on outdated vision information.
+
+---
+
+## Notes
+
+The landing system supports both **light-marker** and **ArUco-marker** detection. Detection behavior, visualization, thresholds, and autonomous landing can be adjusted through `landing_config.py`.
+
+During development, visualization can be useful for tuning the detector. During autonomous flight, visualization should be disabled to avoid slowing the vision thread and introducing stale information into the control loop.
+
+You can record the camera data using the following. Camera 0 is RGB and camera 1 is monochrome.
+
+```bash
+rpicam-vid --camera 0 -t 0 -o recoding_cochstedt.h264
+```

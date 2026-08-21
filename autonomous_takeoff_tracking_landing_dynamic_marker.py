@@ -16,6 +16,8 @@ the NED signs with the vehicle restrained before enabling flight.
 import asyncio
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 from mavsdk import System
@@ -28,7 +30,10 @@ import sys
 from landing_config import *
 
 terminal = sys.stdout
-log_file = open("temp.log", "w")
+log_directory = Path.home() / "logs" / "terminal_logs"
+log_directory.mkdir(parents=True, exist_ok=True)
+log_path = log_directory / f"terminal_{datetime.now():%Y%m%d_%H%M%S}.log"
+log_file = log_path.open("w", encoding="utf-8")
 
 class Logger:
     def __init__(self, *streams):
