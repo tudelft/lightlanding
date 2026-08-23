@@ -139,10 +139,10 @@ ssh mzaffar@10.42.0.5
 
 ## 2.3 Start MAVLink Routing
 
-On the Raspberry Pi, run:
+Check the IP address of the laptop (assuming here it is 10.42.0.1). On the Raspberry Pi, run:
 
 ```bash
-mavlink-routerd /dev/ttyACM0:921600 -e 10.42.0.5:14550
+mavlink-routerd /dev/ttyACM0:921600 -e 10.42.0.1:14550
 ```
 
 This streams MAVLink data between QGroundControl and PX4.
