@@ -92,7 +92,7 @@ KD_XY = 0.4  # Horizontal relative-velocity damping gain.
 MAX_HORIZONTAL_SPEED = 2.0  # [m/s] Clamp on commanded north/east tracking speed.
 POSE_FILTER_ALPHA = 0.75  # Low-pass weight for new relative-position measurements (higher = less smoothing).
 VELOCITY_FILTER_ALPHA = 0.75  # Low-pass weight for estimated relative velocity (higher = less smoothing).
-LIGHT_ACQUISITION_RANGE_M = 1.8  # [m] The height above the marker that drone will come down to and keep maintained in case of light tracking
+LIGHT_ACQUISITION_RANGE_M = 1.2  # [m] The height above the marker that drone will come down to and keep maintained in case of light tracking
 LIGHT_DESCENT_ALIGN_RADIUS_M = 0.80  # [m] Lateral error limit for light-marker-based descent while tracking the light marker.
 
 # Alignment, descent, touchdown, and vision-loss recovery
