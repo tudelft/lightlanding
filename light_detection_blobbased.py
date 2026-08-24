@@ -567,9 +567,7 @@ def get_pose_from_arucomarker(pose_type, drone, acquisition_marker_id=None, acqu
             green_ar, map1, map2, interpolation=cv2.INTER_LINEAR)
 
         ### ARUCO Detection
-        print('Looking for Aruco')
         corners, ids, _ = detector.detectMarkers(image_undistorted_ar)
-        print('Found ids', ids)
         published = False
         if ids is not None:
             ids = ids.flatten()
