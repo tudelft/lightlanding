@@ -371,7 +371,10 @@ def get_pose_from_lightmarker(stop_event, pose_type, drone,
 #            break
 
         # print(len(fitered_circles), "circles after line/radius filtering")
-        flight_logging.flight_logger.save_image("light_leds", annotated_colors)
+        # flight_logging.flight_logger.save_image("light_leds", annotated_colors)
+
+        flight_logging.flight_logger.save_image("light_leds", image_undistorted)
+
         if (len(fitered_circles) == 7):
             if (pose_type == 'target'):
                 drone_attitude_reliable = True # if we are just trying to estimate the location of the light marker, we can use the drone's attitude to help with pose estimation
