@@ -70,7 +70,21 @@ RGB_ANALOGUE_GAIN = 1.0  # RGB camera analogue gain applied when creating the ca
 
 # Marker handover and horizontal control (NED vectors use [north, east, down])
 LIGHT_TO_ARUCO_OFFSET_NED = np.array([0.0, 0.0, 0.0], dtype=float)  # [m] Fixed vector from light origin to ArUco landing origin; offsets light-tracking target.
-ARUCO_START_BOX = np.array([3.0, 3.0, 3.5], dtype=float)  # [m] Per-axis relative-position box that starts the ArUco worker during light tracking.
+
+# Light marker
+# ARUCO_START_BOX = np.array([3.0, 3.0, 3.5], dtype=float)  # [m] Per-axis relative-position box that starts the ArUco worker during light tracking.
+# ARUCO_HANDOFF_ENTRY_RANGE_M = 2.2  # [m] Enter ArUco tracking (without descent) below this marker range.
+# ARUCO_HANDOFF_HOLD_RANGE_M = 2.5  # [m] Leave ArUco tracking only above this range; provides hysteresis.
+# FINAL_DESCENT_ENTRY_RANGE_M = 2.2  # [m] Enter final descent below this ArUco marker range.
+# FINAL_DESCENT_HOLD_RANGE_M = 2.5  # [m] Pause/leave final descent above this range; provides hysteresis.
+
+# Aruco marker
+ARUCO_START_BOX = np.array([3.0, 3.0, 4.5], dtype=float)  # [m] Per-axis relative-position box that starts the ArUco worker during light tracking.
+ARUCO_HANDOFF_ENTRY_RANGE_M = 3.0  # [m] Enter ArUco tracking (without descent) below this marker range.
+ARUCO_HANDOFF_HOLD_RANGE_M = 3.5  # [m] Leave ArUco tracking only above this range; provides hysteresis.
+FINAL_DESCENT_ENTRY_RANGE_M = 3.0  # [m] Enter final descent below this ArUco marker range.
+FINAL_DESCENT_HOLD_RANGE_M = 3.5  # [m] Pause/leave final descent above this range; provides hysteresis.
+
 ARUCO_STABLE_TIME = 0.25  # [s] Continuous valid ArUco duration required before it may take control.
 ARUCO_LIGHT_AGREEMENT_M = 1.5  # [m] Maximum light-vs-ArUco target disagreement allowed for handover.
 KP_XY = 0.5  # Horizontal position-controller proportional gain.
@@ -78,10 +92,6 @@ KD_XY = 0.4  # Horizontal relative-velocity damping gain.
 MAX_HORIZONTAL_SPEED = 2.0  # [m/s] Clamp on commanded north/east tracking speed.
 POSE_FILTER_ALPHA = 0.75  # Low-pass weight for new relative-position measurements (higher = less smoothing).
 VELOCITY_FILTER_ALPHA = 0.75  # Low-pass weight for estimated relative velocity (higher = less smoothing).
-ARUCO_HANDOFF_ENTRY_RANGE_M = 2.2  # [m] Enter ArUco tracking (without descent) below this marker range.
-ARUCO_HANDOFF_HOLD_RANGE_M = 2.5  # [m] Leave ArUco tracking only above this range; provides hysteresis.
-FINAL_DESCENT_ENTRY_RANGE_M = 2.2  # [m] Enter final descent below this ArUco marker range.
-FINAL_DESCENT_HOLD_RANGE_M = 2.5  # [m] Pause/leave final descent above this range; provides hysteresis.
 LIGHT_ACQUISITION_RANGE_M = 1.8  # [m] The height above the marker that drone will come down to and keep maintained in case of light tracking
 LIGHT_DESCENT_ALIGN_RADIUS_M = 0.80  # [m] Lateral error limit for light-marker-based descent while tracking the light marker.
 
