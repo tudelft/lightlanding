@@ -629,7 +629,6 @@ def get_pose_from_arucomarker(pose_type, drone, acquisition_marker_id=None, acqu
 
             if show_visualization and published:
                 publish_visualization("ArUco", image_undistorted_ar)
-                flight_logging.flight_logger.save_image("aruco", image_undistorted_ar)
 
         if not published:
             latest_arucotarget_location = None
@@ -637,6 +636,8 @@ def get_pose_from_arucomarker(pose_type, drone, acquisition_marker_id=None, acqu
             latest_dronelocation_witharucotarget = None
             latest_droneorientation_witharucotarget = None
             latest_dronelocation_witharucotarget_timestamp = None
+
+        flight_logging.flight_logger.save_image("aruco", image_undistorted_ar)
 
 def get_latest_lighttarget_location():
     with vision_lock:
