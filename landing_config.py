@@ -8,7 +8,7 @@ Units are included in parameter names or comments.
 import numpy as np
 
 # Primary switches
-ENABLE_AUTONOMY = False  # Enables arming/offboard flight in the autonomous landing script; keep False for bench tests.
+ENABLE_AUTONOMY = True  # Enables arming/offboard flight in the autonomous landing script; keep False for bench tests.
 ENABLE_LOGGING = True  # Enables JSONL telemetry and annotated-image logging during autonomous landing.
 SHOW_VISUALIZATION = False  # Shows OpenCV debug windows produced by the vision workers.
 CONSOLE_STATUS_PERIOD_S = 0.5  # [s] Refresh period for the compact SSH status line; does not affect control-loop timing.
