@@ -32,7 +32,7 @@ MAVSDK_UDP_URL = "udpin://127.0.0.1:14600"  # MAVSDK endpoint selected when MAVL
 
 # Visual-marker and camera selection
 POSE_TYPE = "target"  # Pose worker mode: "target" estimates marker relative to drone; "drone" estimates drone relative to marker.
-ENABLE_LIGHT_MARKER = False  # Autonomous landing: use light-marker acquisition before switching to precision ArUco.
+ENABLE_LIGHT_MARKER = True  # Autonomous landing: use light-marker acquisition before switching to precision ArUco.
 RGB_CAMERA_PORT = 0  # Picamera2 device index used by the RGB/L-shape worker.
 MONO_CAMERA_PORT = 1  # Picamera2 device index used by the monochrome ArUco worker.
 RGB_CAMERA_TYPE = "fisheye"  # Selects fisheye or pinhole undistortion path for the RGB camera.
@@ -72,18 +72,18 @@ RGB_ANALOGUE_GAIN = 1.0  # RGB camera analogue gain applied when creating the ca
 LIGHT_TO_ARUCO_OFFSET_NED = np.array([0.0, 0.0, 0.0], dtype=float)  # [m] Fixed vector from light origin to ArUco landing origin; offsets light-tracking target.
 
 # Light marker
-# ARUCO_START_BOX = np.array([3.0, 3.0, 3.5], dtype=float)  # [m] Per-axis relative-position box that starts the ArUco worker during light tracking.
-# ARUCO_HANDOFF_ENTRY_RANGE_M = 2.2  # [m] Enter ArUco tracking (without descent) below this marker range.
-# ARUCO_HANDOFF_HOLD_RANGE_M = 2.5  # [m] Leave ArUco tracking only above this range; provides hysteresis.
-# FINAL_DESCENT_ENTRY_RANGE_M = 2.2  # [m] Enter final descent below this ArUco marker range.
-# FINAL_DESCENT_HOLD_RANGE_M = 2.5  # [m] Pause/leave final descent above this range; provides hysteresis.
+ARUCO_START_BOX = np.array([3.0, 3.0, 3.5], dtype=float)  # [m] Per-axis relative-position box that starts the ArUco worker during light tracking.
+ARUCO_HANDOFF_ENTRY_RANGE_M = 2.2  # [m] Enter ArUco tracking (without descent) below this marker range.
+ARUCO_HANDOFF_HOLD_RANGE_M = 2.5  # [m] Leave ArUco tracking only above this range; provides hysteresis.
+FINAL_DESCENT_ENTRY_RANGE_M = 2.2  # [m] Enter final descent below this ArUco marker range.
+FINAL_DESCENT_HOLD_RANGE_M = 2.5  # [m] Pause/leave final descent above this range; provides hysteresis.
 
 # Aruco marker
-ARUCO_START_BOX = np.array([3.0, 3.0, 4.5], dtype=float)  # [m] Per-axis relative-position box that starts the ArUco worker during light tracking.
-ARUCO_HANDOFF_ENTRY_RANGE_M = 3.0  # [m] Enter ArUco tracking (without descent) below this marker range.
-ARUCO_HANDOFF_HOLD_RANGE_M = 3.5  # [m] Leave ArUco tracking only above this range; provides hysteresis.
-FINAL_DESCENT_ENTRY_RANGE_M = 3.0  # [m] Enter final descent below this ArUco marker range.
-FINAL_DESCENT_HOLD_RANGE_M = 3.5  # [m] Pause/leave final descent above this range; provides hysteresis.
+# ARUCO_START_BOX = np.array([3.0, 3.0, 4.5], dtype=float)  # [m] Per-axis relative-position box that starts the ArUco worker during light tracking.
+# ARUCO_HANDOFF_ENTRY_RANGE_M = 3.0  # [m] Enter ArUco tracking (without descent) below this marker range.
+# ARUCO_HANDOFF_HOLD_RANGE_M = 3.5  # [m] Leave ArUco tracking only above this range; provides hysteresis.
+# FINAL_DESCENT_ENTRY_RANGE_M = 3.0  # [m] Enter final descent below this ArUco marker range.
+# FINAL_DESCENT_HOLD_RANGE_M = 3.5  # [m] Pause/leave final descent above this range; provides hysteresis.
 
 ARUCO_STABLE_TIME = 0.25  # [s] Continuous valid ArUco duration required before it may take control.
 ARUCO_LIGHT_AGREEMENT_M = 1.5  # [m] Maximum light-vs-ArUco target disagreement allowed for handover.
