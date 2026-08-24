@@ -11,6 +11,7 @@ import numpy as np
 ENABLE_AUTONOMY = False  # Enables arming/offboard flight in the autonomous landing script; keep False for bench tests.
 ENABLE_LOGGING = True  # Enables JSONL telemetry and annotated-image logging during autonomous landing.
 SHOW_VISUALIZATION = False  # Shows OpenCV debug windows produced by the vision workers.
+CONSOLE_STATUS_PERIOD_S = 0.5  # [s] Refresh period for the compact SSH status line; does not affect control-loop timing.
 
 # Autonomous flight and offboard handover
 AUTONOMY_START_MODE = "rc_handover"  # "auto_takeoff" arms/takes off; "rc_handover" waits for a stable light lock before Offboard.

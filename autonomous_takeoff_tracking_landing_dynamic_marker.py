@@ -71,6 +71,42 @@ flight_logger = configure_flight_logger(ENABLE_LOGGING)
 def clip(value, limit):
     return float(np.clip(value, -limit, limit))
 
+
+class ConsoleStatus:
+    """Render a compact, low-rate status line for an SSH terminal."""
+
+    def __init__(self, stream, period_s=CONSOLE_STATUS_PERIOD_S):
+        self.stream = stream
+        self.period_s = period_s
+        self.last_update = 0.0
+        self.last_state = None
+
+    def state_changed(self, state):
+        if state == self.last_state:
+            return
+        self.last_state = state
+        print(f"State: {state}")
+
+    def update(self, now, state, light_position, aruco_position, centered, tilt):
+        if now - self.last_update < self.period_s:
+            return
+        self.last_update = now
+        light_range = "-" if light_position is None else f"{light_position[2]:.2f}m"
+        aruco_range = "-" if aruco_position is None else f"{aruco_position[2]:.2f}m"
+        tilt_text = "-" if tilt is None else f"{tilt:.0f}deg"
+        centered_text = "yes" if centered else "no"
+        self.stream.write(
+            "\r\033[K"
+            f"{state:<20} light={light_range:<6} aruco={aruco_range:<6} "
+            f"centered={centered_text:<3} tilt={tilt_text}"
+        )
+        self.stream.flush()
+
+    def close(self):
+        self.stream.write("\r\033[K\n")
+        self.stream.flush()
+
+
 class RelativePoseFilter:
     """Low-pass position and finite-difference relative-velocity estimator."""
 
@@ -191,10 +227,6 @@ async def connect_drone():
 
 async def send_velocity(drone, velocity):
     velocity = np.asarray(velocity, dtype=float)
-    print(
-        f"command NED velocity: N={velocity[0]:+.2f}, "
-        f"E={velocity[1]:+.2f}, D={velocity[2]:+.2f} m/s"
-    )
     flight_logger.log("velocity_command_ned", velocity=velocity, yaw_deg=command_yaw_deg)
     if ENABLE_AUTONOMY:
         await drone.offboard.set_velocity_ned(
@@ -320,6 +352,7 @@ async def run_mission(light_stop_event, drone):
     await send_velocity(drone, np.zeros(3))
 
     state = "HOVER"
+    status = ConsoleStatus(terminal)
     mission_start = time.monotonic()
     last_aruco_time = None
     last_acquisition_time = None
@@ -340,8 +373,8 @@ async def run_mission(light_stop_event, drone):
     small_aruco_filter = RelativePoseFilter()
 
     while True:
-        print('state', state)
         now = time.monotonic()
+        status.state_changed(state)
 
         if AUTONOMY_START_MODE == "rc_handover":
             if flight_mode_status["offboard"]:
@@ -411,9 +444,16 @@ async def run_mission(light_stop_event, drone):
             light_position = acquisition_filter.position.copy()
             light_velocity = acquisition_filter.velocity.copy()
 
-        print('light_position status', light_position)
-        print('small ArUco pose estimate', aruco_position)
         flight_logger.log("control_sample", state=state, light_position=light_position, light_velocity=light_velocity, aruco_position=aruco_position, aruco_velocity=aruco_velocity)
+        aruco_tilt = platform_tilt_deg(aruco_orientation, latest_drone_to_ned()) if aruco_position is not None else None
+        status.update(
+            now,
+            state,
+            light_position,
+            aruco_position,
+            aruco_position is not None and is_centered(aruco_position, aruco_velocity),
+            aruco_tilt,
+        )
 
         if state == "HOVER":
             await send_velocity(drone, np.zeros(3))
@@ -433,24 +473,14 @@ async def run_mission(light_stop_event, drone):
                     state = "ARUCO_TRACK"
                     aligned_since = None
                     print("Stable small ArUco lock: switching control source.")
-                else:
-                    print(
-                        "ArUco handoff blocked in HOVER: waiting for stable lock "
-                        f"({now - aruco_valid_since:.2f}/{ARUCO_STABLE_TIME:.2f} s)."
-                    )
             elif aruco_position is not None:
-                print(
-                    "ArUco handoff blocked in HOVER: marker range "
-                    f"{aruco_position[2]:.2f} m exceeds "
-                    f"{handoff_range_limit:.2f} m."
-                )
+                aruco_valid_since = None
             elif light_position is not None:
                 aruco_valid_since = None
                 state = "LIGHT_TRACK"
                 print("Light target acquired.")
             else:
                 aruco_valid_since = None
-                print("HOVER: waiting for either the light target or small ArUco.")
 
         if state == "LIGHT_TRACK":
             if light_position is None:
@@ -503,27 +533,12 @@ async def run_mission(light_stop_event, drone):
                             state = "ARUCO_TRACK"
                             aligned_since = None
                             print("Stable small ArUco lock: switching control source.")
-                        else:
-                            print(
-                                "ArUco handoff blocked in LIGHT_TRACK: waiting for stable lock "
-                                f"({now - aruco_valid_since:.2f}/{ARUCO_STABLE_TIME:.2f} s)."
-                            )
                     else:
                         aruco_valid_since = None
-                        print(
-                            "ArUco handoff blocked in LIGHT_TRACK: light/ArUco disagreement "
-                            f"{agreement:.2f} m exceeds {ARUCO_LIGHT_AGREEMENT_M:.2f} m."
-                        )
                 elif aruco_position is not None:
                     aruco_valid_since = None
-                    print(
-                        "ArUco handoff blocked in LIGHT_TRACK: marker range "
-                        f"{aruco_position[2]:.2f} m exceeds "
-                        f"{handoff_range_limit:.2f} m."
-                    )
                 else:
                     aruco_valid_since = None
-                    print("ArUco handoff blocked in LIGHT_TRACK: small ArUco not visible.")
 
         elif state == "ARUCO_TRACK":
             if aruco_position is None:
@@ -538,11 +553,7 @@ async def run_mission(light_stop_event, drone):
                     await send_velocity(drone, np.zeros(3))
             else:
                 await send_velocity(drone, tracking_velocity(aruco_position, aruco_velocity))
-                aruco_tilt = platform_tilt_deg(aruco_orientation, latest_drone_to_ned())
                 orientation_ok = aruco_tilt is not None and aruco_tilt <= MAX_LANDING_TILT_DEG
-                print('orientation_ok', orientation_ok)
-                print(is_centered(aruco_position, aruco_velocity))
-                #orientation_ok = True
                 final_descent_range_limit = (
                     FINAL_DESCENT_HOLD_RANGE_M
                     if aligned_since is not None
@@ -569,10 +580,6 @@ async def run_mission(light_stop_event, drone):
         elif state == "VISION_RECOVERY_CLIMB":
             if now < recovery_climb_until:
                 await send_velocity(drone, np.array([0.0, 0.0, -VISION_LOSS_CLIMB_SPEED]))
-                print(
-                    "Vision recovery climb in progress: "
-                    f"{recovery_climb_until - now:.2f} s remaining."
-                )
             else:
                 recovery_climb_until = None
                 state = "HOVER"
@@ -610,7 +617,6 @@ async def run_mission(light_stop_event, drone):
                         print("Vision lost during final descent: holding position; recovery climb disabled.")
             else:
                 command = tracking_velocity(aruco_position, aruco_velocity)
-                print('is_centered(aruco_position, aruco_velocity):', is_centered(aruco_position, aruco_velocity))
                 if is_centered(aruco_position, aruco_velocity):
                     range_reference = max(
                         TOUCHDOWN_RANGE_M,
@@ -626,8 +632,6 @@ async def run_mission(light_stop_event, drone):
                 ))
                 if not is_centered(aruco_position, aruco_velocity):
                     command[2] = 0.0
-                aruco_tilt = platform_tilt_deg(aruco_orientation, latest_drone_to_ned())
-                print('aruco_tilt', aruco_tilt)
                 if aruco_tilt is None or aruco_tilt > MAX_LANDING_TILT_DEG:
                     command[2] = 0.0
 
@@ -682,6 +686,8 @@ async def main():
     try:
         await run_mission(light_stop_event, drone)
     finally:
+        terminal.write("\r\033[K\n")
+        terminal.flush()
         light_stop_event.set()
         if ENABLE_AUTONOMY:
             try:

@@ -191,6 +191,12 @@ python autonomous_takeoff_tracking_landing_dynamic_marker.py
 
 Startup logs should begin appearing within approximately **2–3 seconds**.
 
+During operation, the SSH terminal keeps one compact status line updated with
+the mission state, light and ArUco ranges, lateral centering, and platform
+tilt. Connection, state-transition, safety, and landing messages are printed
+only when they occur. Detailed control samples and telemetry remain in the
+JSONL files under `~/logs`.
+
 ![LightLanding terminal output](lightlanding-terminal-output.png)
 
 ---
